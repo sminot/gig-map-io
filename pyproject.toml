@@ -1,0 +1,51 @@
+[@@]
+[build-system]
+requires = ["setuptools>=61.0", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gig-map-io"
+version = "0.1.0"
+description = "Utilities for parsing and analyzing outputs of the gig-map (genes-in-genomes map) workflow."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+  { name = "gig-map-io developers" }
+]
+keywords = ["pangenome", "metagenomics", "gig-map", "bioinformatics"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+  "pandas>=2.0",
+  "numpy>=1.24",
+  "marimo>=0.8.0",
+  "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff",
+  "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/FredHutch/gig-map-io"
+Repository = "https://github.com/FredHutch/gig-map-io"
+
+[project.scripts]
+gig-map-io = "gig_map_io.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
