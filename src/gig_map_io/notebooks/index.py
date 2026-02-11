@@ -1,4 +1,3 @@
-[@@]
 """
 Entry marimo notebook for gig-map-io.
 
