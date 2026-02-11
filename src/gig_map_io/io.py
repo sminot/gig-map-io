@@ -1,4 +1,3 @@
-[@@]
 """
 I/O helper utilities for gig-map-io.
 

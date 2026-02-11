@@ -1,4 +1,3 @@
-[@@]
 """
 Bundled marimo notebooks for gig-map-io.
 

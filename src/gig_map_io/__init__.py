@@ -1,4 +1,3 @@
-[@@]
 """
 Top-level package for gig-map-io.
 
