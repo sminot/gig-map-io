@@ -2,20 +2,23 @@
 Compatibility re-exports for core data model classes.
 
 This module maintains backward compatibility for code that imports from
-`gig_map_io.core`. The actual implementations are now in dedicated modules:
-- `gig_map_io.pangenome` - Pangenome class
-- `gig_map_io.contrast_metagenomes` - ContrastMetagenomes class
-- `gig_map_io.pangenome_bin` - PangenomeBin class
+`gig_map_io.core`. The actual implementations live in `gig_map_io.models`.
 """
 
 from __future__ import annotations
 
-from .contrast_metagenomes import ContrastMetagenomes
-from .pangenome import Pangenome
-from .pangenome_bin import PangenomeBin
+from .models import (
+    CompareMultipleMetagenomes,
+    ContrastMetagenomes,
+    Pangenome,
+    PangenomeBin,
+    PangenomePhylogeny,
+)
 
 __all__ = [
-    "Pangenome",
+    "CompareMultipleMetagenomes",
     "ContrastMetagenomes",
+    "Pangenome",
     "PangenomeBin",
+    "PangenomePhylogeny",
 ]

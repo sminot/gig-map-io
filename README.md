@@ -1,13 +1,16 @@
 # gig-map-io
 
-Python library for parsing and analyzing the outputs of gig-map (genes-in-genomes map) workflow.
+Python library for **reading the outputs of the [gig-map](https://github.com/fredhutch/gig-map) workflow** (genes-in-genomes map). It provides reader objects for each gig-map workflow and plotting functions that use those objects for common visualizations.
 
-## Features
+## Overview
 
-- **Core Classes**: `Pangenome`, `ContrastMetagenomes`, and `PangenomeBin` for working with gig-map outputs
-- **Catalog**: Track and manage multiple pangenomes and contrasts with automatic persistence
-- **CLI Tools**: Launch interactive marimo notebooks for data exploration
-- **Simple API**: Direct filesystem access with pandas integration
+- **Reader objects** — One per gig-map workflow; each reads the key outputs of that workflow:
+  - **`Pangenome`** — pangenome workflow outputs (e.g. gene bins, genome content)
+  - **`ContrastMetagenomes`** — contrast-metagenomes workflow (summary, association results, optional RPKM)
+  - **`PangenomePhylogeny`** — phylogeny workflow (e.g. bin trees)
+  - **`PangenomeBin`** — per-bin data within a pangenome (e.g. bin abundance)
+
+- **Plotting functions** — Take one or more reader objects and return Plotly figures. **Volcano** (single contrast), **compare-contrasts** (signed log q-value scatter for two contrasts), and **estimate-scatter** (Estimate ± SE for two contrasts) are implemented; **double-volcano** (two volcano plots comparing two contrasts), bin abundance, and bin phylogeny are stubbed.
 
 ## Installation
 
@@ -23,21 +26,51 @@ cd gig-map-io
 pip install -e ".[dev]"
 ```
 
-## Quick Start
+## Quick start
+
+### Using reader objects
 
 ```python
 from pathlib import Path
-from gig_map_io import Pangenome, Catalog
+from gig_map_io import Pangenome, ContrastMetagenomes, PangenomePhylogeny
 
-# Work with a pangenome
+# Read pangenome outputs
 pang = Pangenome(directory=Path("/path/to/pangenome"))
-gpa = pang.gene_presence_absence()
+gene_bins = pang.gene_bins
+genome_content = pang.genome_content
 
-# Track multiple outputs with Catalog
-catalog = Catalog()
-catalog.add_pangenome(Path("/path/to/pangenome1"), "pangenome1")
+# Read contrast outputs (summary, association, optional RPKM)
+contrast = ContrastMetagenomes(directory=Path("/path/to/contrast"))
+summary = contrast.summary
+association = contrast.association   # association/association.csv
+rpkm = contrast.rpkm                 # bin_abundance/rpkm.csv.gz if present
+```
+
+### Plotting
+
+```python
+from pathlib import Path
+from gig_map_io import (
+    ContrastMetagenomes,
+    plot_volcano,
+    plot_compare_contrasts,
+    plot_estimate_scatter,
+    plot_bin_abundance,
+    plot_bin_phylogeny,
+)
+
+# Volcano (single contrast)
+fig = plot_volcano(contrast, fdr_thresh=0.05, estimate_thresh=0.5)
+
+# Compare two contrasts: concordance scatter (signed log10 q-value) and estimate scatter (Estimate ± SE)
+c1 = ContrastMetagenomes(directory=Path("/path/to/contrast1"))
+c2 = ContrastMetagenomes(directory=Path("/path/to/contrast2"))
+fig = plot_compare_contrasts(c1, c2, label1="Study A", label2="Study B")
+fig = plot_estimate_scatter(c1, c2, fdr_thresh=0.05)
+
+# Bin abundance and bin phylogeny: stubbed (NotImplementedError)
 ```
 
 ## License
 
-See LICENSE file for details.
+See the LICENSE file for details.

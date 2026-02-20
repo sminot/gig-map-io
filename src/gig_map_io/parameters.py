@@ -112,9 +112,12 @@ class Parameters:
             if user_on_change is not None:
                 user_on_change(v)
 
-        value = self.get(key, "")
-        if not isinstance(value, str):
-            value = str(value)
+        if key in self._data:
+            value = self.get(key)
+            value = value if isinstance(value, str) else str(value)
+            kwargs.pop("value")
+        else:
+            value = kwargs.pop("value", "")
         return mo.ui.text(value=value, on_change=_on_change, **kwargs)
 
     def ui_dropdown(
@@ -137,7 +140,14 @@ class Parameters:
             if user_on_change is not None:
                 user_on_change(v)
 
-        value = self.get(key)
+        if key in self._data:
+            value = self.get(key)
+        else:
+            value = kwargs.pop("value", None)
+
+        if value not in options:
+            value = None
+
         return mo.ui.dropdown(
             options=options, value=value, on_change=_on_change, **kwargs
         )
@@ -162,9 +172,19 @@ class Parameters:
             if user_on_change is not None:
                 user_on_change(v)
 
-        value = self.get(key)
+        if key in self._data:
+            value = self.get(key)
+        else:
+            value = kwargs.pop("value", None)
+ 
         if value is not None and not isinstance(value, (list, tuple)):
             value = [value]
+
+        if value is not None:
+            value = [v for v in value if v in options]
+        else:
+            value = []
+ 
         return mo.ui.multiselect(
             options=options, value=value, on_change=_on_change, **kwargs
         )
@@ -183,9 +203,13 @@ class Parameters:
             if user_on_change is not None:
                 user_on_change(v)
 
-        value = self.get(key, "")
-        if not isinstance(value, str):
-            value = str(value)
+        if key in self._data:
+            value = self.get(key)
+        else:
+            value = kwargs.pop("value", "")
+
+        value = value if isinstance(value, str) else str(value)
+
         return mo.ui.text_area(
             value=value, on_change=_on_change, **kwargs
         )
@@ -204,8 +228,17 @@ class Parameters:
             if user_on_change is not None:
                 user_on_change(v)
 
-        value = self.get(key, False)
+        if key in self._data:
+            value = bool(self.get(key, False))
+        else:
+            value = bool(kwargs.pop("value", False))
+
+        if value is not None:
+            value = bool(value)
+        else:
+            value = False
+
         return mo.ui.checkbox(
-            value=bool(value), on_change=_on_change, **kwargs
+            value=value, on_change=_on_change, **kwargs
         )
 

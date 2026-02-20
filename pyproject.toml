@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gig-map-io"
 version = "0.1.0"
-description = "Utilities for parsing and analyzing outputs of the gig-map (genes-in-genomes map) workflow."
+description = "Library to read gig-map workflow outputs: reader objects per workflow and plotting functions (volcano, bin abundance, bin phylogeny)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -21,12 +21,13 @@ classifiers = [
   "Intended Audience :: Science/Research",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
+# Required for reading workflow outputs (models), plotting, and Parameters
 dependencies = [
-  "pandas>=2.0",
-  "numpy>=1.24",
-  "marimo>=0.8.0",
-  "click>=8.0",
-  "cirro>=1.5.4",
+  "pandas>=2.0", # models (association, RPKM, etc.), plots, io
+  "numpy>=1.24", # volcano and compare-contrasts plots
+  "plotly>=5.0", # all plot functions (express, graph_objects, subplots)
+  "statsmodels>=0.14", # FDR correction in volcano and compare-contrasts
+  "marimo>=0.8.0", # parameters.py (Parameters class for marimo notebooks)
 ]
 
 [project.optional-dependencies]
@@ -39,9 +40,6 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/FredHutch/gig-map-io"
 Repository = "https://github.com/FredHutch/gig-map-io"
-
-[project.scripts]
-gig-map-io = "gig_map_io.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
