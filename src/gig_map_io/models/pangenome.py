@@ -2,13 +2,14 @@
 Pangenome base class for gig-map-io.
 """
 
-from functools import cached_property
+from functools import cached_property, lru_cache
 import pandas as pd
 import numpy as np
 from plotly import graph_objects as go
 import plotly.express as px
 
 from ..helpers.sort_dataframe import sort_dataframe
+from ..helpers.save_image import save_image
 from .dataset import Dataset
 
 
@@ -96,7 +97,12 @@ class Pangenome(Dataset):
         """
         return self.gene_bins["bin"].value_counts()
 
-    def bin_genome_heatmap(self) -> go.Figure:
+    def bin_genome_heatmap(
+        self,
+        width: int = 500,
+        height: int = 400,
+        file_prefix: str | None = None
+    ) -> go.Figure:
         """
         Heatmap of bin presence/absence for each genome.
         """
@@ -113,7 +119,7 @@ class Pangenome(Dataset):
         # Set the edges of the bins so that the widths match the number of genes
         x = [0] + self.bin_size.reindex(wide_sorted.columns.values).cumsum().tolist()
 
-        return go.Figure(
+        fig = go.Figure(
             data=[
                 go.Heatmap(
                     z=wide_sorted.values,
@@ -125,11 +131,24 @@ class Pangenome(Dataset):
             layout=go.Layout(
                 xaxis_title="Gene",
                 yaxis_title="Genome",
-                template="simple_white"
+                template="simple_white",
+                width=width,
+                height=height
             )
         )
+        # If save_image was provided, use the string as the file
+        # prefix to write out HTML, PDF, PNG, and JSON
+        save_image(fig, file_prefix)
 
-    def bin_size_histogram(self, bins: int = 30) -> go.Figure:
+        return fig
+
+    def bin_size_histogram(
+        self,
+        bins: int = 30,
+        width: int = 500,
+        height: int = 400,
+        file_prefix: str | None = None
+    ) -> go.Figure:
         """
         Histogram of bin sizes.
         """
@@ -150,15 +169,42 @@ class Pangenome(Dataset):
         ]
         bins = 0.5 * (bins[:-1] + bins[1:])
 
-        return px.bar(
+        fig = px.bar(
             x=bins,
             y=counts,
             labels={'x':"Pangenome Bin Size (# of Genes)", 'y':'Total Gene Content'},
             template="simple_white",
-            hover_name=bin_names
+            hover_name=bin_names,
+            width=width,
+            height=height
         )
+        # If save_image was provided, use the string as the file
+        # prefix to write out HTML, PDF, PNG, and JSON
+        save_image(fig, file_prefix)
 
-    def rarefaction_curve(self, max_genomes: int = 100) -> go.Figure:
+        return fig
+
+    @lru_cache
+    def rarefaction_curve_data(_self, max_genomes: int = 100) -> pd.DataFrame:
+        df = _self.bin_presence_wide * _self.bin_size
+        return pd.DataFrame([
+            dict(
+                n_genomes=n_genomes,
+                **pd.Series([
+                    df.sample(n_genomes).max().sum()
+                    for rep in range(100)
+                ]).describe()
+            )
+            for n_genomes in range(1, min(max_genomes, df.shape[0]))
+        ])
+
+    def rarefaction_curve(
+        self,
+        max_genomes: int = 100,
+        width: int = 500,
+        height: int = 400,
+        file_prefix: str | None = None
+    ) -> go.Figure:
         """
         Rarefaction curve of the pangenome.
 
@@ -172,17 +218,7 @@ class Pangenome(Dataset):
         Plotly figure of the rarefaction curve.
         """
         # Simulate the number of genes recovered with different numbers of subsampled genomes
-        df = self.bin_presence_wide * self.bin_size
-        rf = pd.DataFrame([
-            dict(
-                n_genomes=n_genomes,
-                **pd.Series([
-                    df.sample(n_genomes).max().sum()
-                    for rep in range(100)
-                ]).describe()
-            )
-            for n_genomes in range(1, min(max_genomes, df.shape[0]))
-        ])
+        rf = self.rarefaction_curve_data(max_genomes)
 
         fig = go.Figure(
             data=[
@@ -215,7 +251,14 @@ class Pangenome(Dataset):
             layout=go.Layout(
                 xaxis_title="Number of Genomes",
                 yaxis_title="Number of Genes",
-                template="simple_white"
+                yaxis_range=[0, rf["75%"].max()],
+                template="simple_white",
+                width=width,
+                height=height
             )
         )
+        # If save_image was provided, use the string as the file
+        # prefix to write out HTML, PDF, PNG, and JSON
+        save_image(fig, file_prefix)
+
         return fig
