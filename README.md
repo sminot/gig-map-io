@@ -40,7 +40,7 @@ gene_bins = pang.gene_bins
 genome_content = pang.genome_content
 
 # Read contrast outputs (summary, association, optional RPKM)
-contrast = ContrastMetagenomes(directory=Path("/path/to/contrast"))
+contrast = ContrastMetagenomes(directory=Path("/path/to/contrast"), parameter="my_parameter")
 summary = contrast.summary
 association = contrast.association   # association/association.csv
 rpkm = contrast.rpkm                 # bin_abundance/rpkm.csv.gz if present
@@ -63,8 +63,8 @@ from gig_map_io import (
 fig = plot_volcano(contrast, fdr_thresh=0.05, estimate_thresh=0.5)
 
 # Compare two contrasts: concordance scatter (signed log10 q-value) and estimate scatter (Estimate ± SE)
-c1 = ContrastMetagenomes(directory=Path("/path/to/contrast1"))
-c2 = ContrastMetagenomes(directory=Path("/path/to/contrast2"))
+c1 = ContrastMetagenomes(directory=Path("/path/to/contrast1"), parameter="param1")
+c2 = ContrastMetagenomes(directory=Path("/path/to/contrast2"), parameter="param2")
 fig = plot_compare_contrasts(c1, c2, label1="Study A", label2="Study B")
 fig = plot_estimate_scatter(c1, c2, fdr_thresh=0.05)
 
