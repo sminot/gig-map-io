@@ -11,7 +11,6 @@ from .models import (
     CompareMultipleMetagenomes,
     ContrastMetagenomes,
     Pangenome,
-    PangenomeBin,
     PangenomePhylogeny,
 )
 
@@ -19,6 +18,5 @@ __all__ = [
     "CompareMultipleMetagenomes",
     "ContrastMetagenomes",
     "Pangenome",
-    "PangenomeBin",
     "PangenomePhylogeny",
 ]

@@ -5,8 +5,8 @@ This library provides:
 
 - **Reader objects** (one per gig-map workflow): each reads the key outputs of
   that workflow. Use ``Pangenome``, ``ContrastMetagenomes``, and
-  ``PangenomePhylogeny`` for the main workflows; ``PangenomeBin`` for per-bin
-  data. ``CompareMultipleMetagenomes`` wraps a dict of ``ContrastMetagenomes``
+  ``PangenomePhylogeny`` for the main workflows.
+  ``CompareMultipleMetagenomes`` wraps a dict of ``ContrastMetagenomes``
   keyed by pangenome name to combine analyses across pangenomes.
 
 - **Plotting functions**: take one or more reader objects and produce common
@@ -17,7 +17,6 @@ from .core import (
     CompareMultipleMetagenomes,
     ContrastMetagenomes,
     Pangenome,
-    PangenomeBin,
     PangenomePhylogeny,
 )
 from .parameters import Parameters
@@ -34,7 +33,6 @@ __all__ = [
     "CompareMultipleMetagenomes",
     "ContrastMetagenomes",
     "Pangenome",
-    "PangenomeBin",
     "PangenomePhylogeny",
     "Parameters",
     "plot_bin_abundance",

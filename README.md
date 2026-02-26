@@ -8,7 +8,6 @@ Python library for **reading the outputs of the [gig-map](https://github.com/fre
   - **`Pangenome`** — pangenome workflow outputs (e.g. gene bins, genome content)
   - **`ContrastMetagenomes`** — contrast-metagenomes workflow (summary, association results, optional RPKM)
   - **`PangenomePhylogeny`** — phylogeny workflow (e.g. bin trees)
-  - **`PangenomeBin`** — per-bin data within a pangenome (e.g. bin abundance)
 
 - **Plotting functions** — Take one or more reader objects and return Plotly figures. **Volcano** (single contrast), **compare-contrasts** (signed log q-value scatter for two contrasts), and **estimate-scatter** (Estimate ± SE for two contrasts) are implemented; **double-volcano** (two volcano plots comparing two contrasts), bin abundance, and bin phylogeny are stubbed.
 
