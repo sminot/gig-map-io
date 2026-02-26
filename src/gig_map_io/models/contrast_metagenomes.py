@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 
 from .dataset import Dataset
 from ..helpers.make_lines import make_lines
+from ..helpers.save_image import save_image
 
 
 class ContrastMetagenomes(Dataset):
@@ -81,6 +82,15 @@ class ContrastMetagenomes(Dataset):
         return df
 
     @cached_property
+    def metadata(self) -> pd.DataFrame:
+        """
+        Metadata from metadata.csv.
+        """
+        path = self.directory / "association" / "metadata.csv"
+        df = pd.read_csv(path, index_col=0)
+        return df
+
+    @cached_property
     def mean_abund(self) -> pd.Series:
         """
         Mean bin abundance (RPKM) for each bin.
@@ -98,6 +108,7 @@ class ContrastMetagenomes(Dataset):
         max_abs_estimate: float = 5.0,
         width: int = 500,
         height: int = 400,
+        file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
         """
@@ -129,4 +140,56 @@ class ContrastMetagenomes(Dataset):
         make_lines(0, "black", fig)
         make_lines(estimate_thresh, "red", fig, hline=False)
         make_lines(-np.log10(fdr_thresh), "red", fig, vline=False, neg=False)
+
+        # If save_image was provided, use the string as the file
+        # prefix to write out HTML, PDF, PNG, and JSON
+        save_image(fig, file_prefix)
+
+        return fig
+
+    def plot_bin_abundance(
+        self,
+        bin: str,
+        norm_bin: str | None = None,
+        width: int = 500,
+        height: int = 400,
+        file_prefix: str | None = None,
+        **kwargs
+    ) -> go.Figure:
+        """
+        Plot the abundance of a bin.
+        """
+        assert bin in self.rpkm.columns, f"{bin} not found in rpkm.csv.gz"
+
+        # The data used for plotting will be the metadata and the bin abundance
+        df = self.metadata.assign(
+            abundance=(
+                self.rpkm.loc[:, bin]
+                if norm_bin is None
+                else self.rpkm.loc[:, bin] / self.rpkm.loc[:, norm_bin]
+            )
+        )
+
+        fig = px.histogram(
+            data_frame=df,
+            y="abundance",
+            template="simple_white",
+            width=width,
+            height=height,
+            **kwargs
+        )
+        fig.update_xaxes(title_text=f"{kwargs.get('histnorm', 'number').title()} of Samples")
+        fig.update_yaxes(
+            title_text=(
+                f"Abundance of {bin} (RPKM)"
+                if norm_bin is None
+                else f"Abundance of {bin} / {norm_bin}"
+            ),
+            col=1
+        )
+
+        # If save_image was provided, use the string as the file
+        # prefix to write out HTML, PDF, PNG, and JSON
+        save_image(fig, file_prefix)
+
         return fig
