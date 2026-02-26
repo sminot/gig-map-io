@@ -28,6 +28,7 @@ dependencies = [
   "plotly>=5.0", # all plot functions (express, graph_objects, subplots)
   "statsmodels>=0.14", # FDR correction in volcano and compare-contrasts
   "marimo>=0.8.0", # parameters.py (Parameters class for marimo notebooks)
+  "matplotlib>=3.9.4",
 ]
 
 [project.optional-dependencies]

@@ -7,9 +7,11 @@ import pandas as pd
 import numpy as np
 from plotly import graph_objects as go
 import plotly.express as px
+import matplotlib.pyplot as plt
 
 from ..helpers.sort_dataframe import sort_dataframe
 from ..helpers.save_image import save_image
+from ..helpers.coords import Coords
 from .dataset import Dataset
 
 
@@ -43,7 +45,31 @@ class Pangenome(Dataset):
         DataFrame containing gene bin assignments.
         """
         path = self.directory / "bin_pangenome" / "gene_bins.csv"
-        return pd.read_csv(path)
+        return (
+            pd.read_csv(path)
+            .assign(
+                gene_label=lambda d: d.apply(
+                    lambda r: f"{r['gene_id']} - {r['combined_name']}",
+                    axis=1
+                )
+            )
+        )
+
+    @cached_property
+    def align_genomes(self) -> pd.DataFrame:
+        """
+        Alignment of genomes from align/genomes.aln.csv.gz.
+        """
+        path = self.directory / "align" / "genomes.aln.csv.gz"
+        df = pd.read_csv(path)
+
+        # Add the bin label to the alignment
+        df = df.assign(
+            bin=df["sseqid"].apply(
+                self.gene_bins.set_index("gene_id")["bin"].get
+            )
+        )
+        return df
 
     @cached_property
     def n_bins(self) -> int:
@@ -262,3 +288,91 @@ class Pangenome(Dataset):
         save_image(fig, file_prefix)
 
         return fig
+
+    def bin_gene_map(
+        self,
+        bin: str,
+        width: int = 5,
+        height: int = 5,
+        remove_gene_id = True,
+        remove_org_tag = True,
+        text_offset = 0.05,
+        file_prefix: str | None = None
+    ) -> go.Figure:
+        """
+        Map of genes in a bin.
+        """
+
+        # Get the coordinates for every gene across every genome
+        # Filter to just the genes in this bin
+        aln = self.align_genomes.query(f"bin == '{bin}'")
+
+        # Figure out the coordinates by looking at all of the contig alignments
+        coords = Coords(aln)
+
+        coords = coords.to_df()
+
+        # Customize the names
+        coords = coords.assign(
+            gene_label=coords['gene'].apply(self.gene_bins.set_index("gene_id")["gene_label"].get),
+            label=lambda d: d['gene_label'].apply(
+                lambda gene: self.customize_label(gene, remove_gene_id, remove_org_tag)
+            )
+        )
+
+        max_y = np.max([coords['start'].max(), coords['stop'].max()])
+        min_y = np.min([coords['start'].min(), coords['stop'].min()])
+        span_y = max_y - min_y
+
+        coords = coords.assign(
+            start_y=lambda d: (d['start'] - min_y) / span_y,
+            stop_y=lambda d: (d['stop'] - min_y) / span_y
+        )
+
+        fig, ax = plt.subplots(figsize=(width, height))
+        for ix, r in coords.iterrows():
+
+            ax.annotate(
+                "",
+                xytext=(0, r['start_y']),
+                xy=(0, r['stop_y']),
+                arrowprops=dict(arrowstyle="->")
+            )
+            ax.plot([0, 0], [r['start_y'], r['stop_y']], linewidth=0)
+
+            ax.annotate(
+                '',
+                xytext=(text_offset, (ix + 0.75) / coords.shape[0]),
+                xy=(text_offset / 10., np.mean([r['start_y'], r['stop_y']])),
+                arrowprops=dict(arrowstyle="-"),
+                horizontalalignment='left',  # Align text to the right of its position
+                verticalalignment='center'
+            )
+            ax.text(text_offset, (ix + 0.5) / coords.shape[0], r['label'])
+        
+        ax.axis("off")
+
+        # If save_image was provided, use the string as the file
+        # prefix to write out HTML, PDF, PNG, and JSON
+        save_image(fig, file_prefix)
+
+        # Optionally save the relative gene coordinates as CSV
+        if file_prefix is not None:
+            coords.to_csv(file_prefix + ".csv", index=False)
+
+        return fig
+
+    @staticmethod
+    def customize_label(label: str, remove_gene_id: bool, remove_org_tag: bool):
+        if remove_gene_id:
+            if label.startswith("Bin "):
+                label = " - ".join(label.split(" - ", 2)[[0, 2]])
+            else:
+                label = label.split(" - ", 1)[1]
+        if remove_org_tag:
+            if " [" in label:
+                label = label.rsplit(" [", 1)[0]
+            if "MULTISPECIES: " in label:
+                label = label.replace("MULTISPECIES: ", "")
+
+        return label
