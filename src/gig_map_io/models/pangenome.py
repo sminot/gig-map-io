@@ -27,6 +27,15 @@ class Pangenome(Dataset):
     CSV files on subsequent accesses.
     """
 
+    def __repr__(self) -> str:
+        return f"Pangenome(directory={self.directory})"
+
+    def __str__(self) -> str:
+        return f"Pangenome(directory={self.directory})"
+
+    def __format__(self, format_spec: str) -> str:
+        return f"Pangenome(directory={self.directory})"
+
     @cached_property
     def unbinned_genes_all_genomes_html(self) -> str:
         """

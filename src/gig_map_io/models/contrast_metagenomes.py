@@ -32,6 +32,15 @@ class ContrastMetagenomes(Dataset):
             raise ValueError("parameter must be a string")
         self.parameter = parameter
 
+    def __repr__(self) -> str:
+        return f"ContrastMetagenomes(directory={self.directory}, parameter={self.parameter})"
+
+    def __str__(self) -> str:
+        return f"ContrastMetagenomes(directory={self.directory}, parameter={self.parameter})"
+
+    def __format__(self, format_spec: str) -> str:
+        return f"ContrastMetagenomes(directory={self.directory}, parameter={self.parameter})"
+
     @cached_property
     def association(self) -> pd.DataFrame:
         """
