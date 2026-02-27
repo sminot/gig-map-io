@@ -3,17 +3,32 @@ Pangenome base class for gig-map-io.
 """
 
 from functools import cached_property, lru_cache
+import hashlib
+from pathlib import Path
+import sys
+from typing import Dict, List
+from Bio import Phylo
 import pandas as pd
 import numpy as np
 from plotly import graph_objects as go
 import plotly.express as px
 import matplotlib.pyplot as plt
+from Bio.Phylo.TreeConstruction import DistanceMatrix, DistanceTreeConstructor
+from Bio.Phylo.BaseTree import Tree, Clade
+from plotly.subplots import make_subplots
 
 from ..helpers.sort_dataframe import sort_dataframe
 from ..helpers.save_image import save_image
 from ..helpers.coords import Coords
 from .dataset import Dataset
+from ..helpers.phylogeny import Phylogeny
 
+from logging import getLogger
+import logging
+
+logger = getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 
 class Pangenome(Dataset):
     """
@@ -63,6 +78,18 @@ class Pangenome(Dataset):
                 )
             )
         )
+
+    @cached_property
+    def ani_distances(self) -> pd.DataFrame:
+        """
+        ANI distances DataFrame loaded from distances.csv.gz.
+
+        Returns
+        -------
+        DataFrame containing ANI distances.
+        """
+        path = self.directory / "distances.csv.gz"
+        return pd.read_csv(path, index_col=0)
 
     @cached_property
     def align_genomes(self) -> pd.DataFrame:
@@ -385,3 +412,134 @@ class Pangenome(Dataset):
                 label = label.replace("MULTISPECIES: ", "")
 
         return label
+
+    def bin_presence_heatmap(
+        self,
+        bins: str | List[str],
+        width: int = 500,
+        height: int = 400,
+        title: str = "Bin Presence Heatmap",
+        show_ani_tree: bool = True,
+        show_genome_names: bool = False,
+        tree_proportion: float = 0.5,
+        horizontal_spacing: float = 0.,
+        file_prefix: str | None = None
+    ) -> go.Figure:
+        """
+        Heatmap of bin presence/absence for each genome.
+        Parameters
+        ----------
+        bins: str | List[str]
+            The bins to plot.
+        width: int
+            The width of the figure.
+        height: int
+            The height of the figure.
+        file_prefix: str | None
+            The prefix for the file to save the figure to.
+
+        Returns
+        -------
+        Plotly figure of the heatmap.
+        """
+
+        if isinstance(bins, str):
+            bins = [bins]
+
+        # Get the genomes that this bin is found in
+        df = (
+            self.genome_content
+            .loc[self.genome_content["bin"].isin(bins)]
+            .assign(present=1)
+            .pivot_table(index="genome", columns="bin",values="present")
+            .reindex(index=self.genome_content["genome"].unique(), columns=bins)
+            .fillna(0)
+            .astype(int)
+        )
+        df = df[df.index.notnull()]
+
+        left_tree = self.ani_tree
+        df = df.reindex(index=left_tree.leaves_list)
+
+        fig = make_subplots(
+            rows=1,
+            cols=1 + int(show_ani_tree),
+            shared_yaxes=True,
+            horizontal_spacing=horizontal_spacing,
+            column_widths=[tree_proportion, 1.-tree_proportion] if show_ani_tree else [1.]
+        )
+        if show_ani_tree:
+            left_tree.plot_lines(fig, row=1, col=1)
+            left_tree.plot_points(fig, mode="markers", row=1, col=1)
+
+        fig.add_heatmap(
+            z=df.values,
+            x=df.columns.values,
+            y=list(range(df.shape[0])),
+            colorscale="blues",
+            showscale=False,
+            row=1,
+            col=1 + int(show_ani_tree)
+        )
+
+        fig.update_layout(
+            height=height,
+            width=width,
+            template="simple_white",
+            title=dict(text=title, x=0.5, xanchor="center")
+        )
+        if show_genome_names:
+            fig.update_yaxes(
+                tickmode="array",
+                tickvals=list(range(df.shape[0])),
+                ticktext=df.index.values,
+                side='right',
+                anchor="x2"
+            )
+        else:
+            fig.update_yaxes(
+                visible=False
+            )
+        
+        # If save_image was provided, use the string as the file
+        # prefix to write out HTML, PDF, PNG, and JSON
+        save_image(fig, file_prefix)
+        return fig
+
+    @cached_property
+    def ani_tree(self) -> Phylogeny:
+        # Get the ANI distances
+        ani_dist = self.ani_distances.copy()
+
+        # Make a distance matrix in BioPython format
+        dm = DistanceMatrix(
+            names=list(ani_dist.index.values),
+            matrix=[
+                l[:(i+1)]
+                for i, l in enumerate(ani_dist.values.tolist())
+            ]
+        )
+
+        # Compute a hash of the ani_dist DataFrame which can be used to identify the tree
+        tree_hash = hashlib.sha256(ani_dist.to_csv().encode()).hexdigest()
+
+        # Cache the NJ tree as Newick, using the hash as the filename
+        cache_file = Path(f".cache/pangenome_ani_tree/{tree_hash}.nwk")
+        if cache_file.exists():
+            logger.info(f"Loading ANI tree from cache: {cache_file}")
+            tree = Phylo.read(cache_file, "newick")
+        else:
+            logger.info(f"Computing ANI tree and caching to: {cache_file}")
+            constructor = DistanceTreeConstructor()
+            tree = constructor.nj(dm)
+            tree.root_at_midpoint()
+            cache_file.parent.mkdir(exist_ok=True, parents=True)
+            Phylo.write(tree, cache_file, "newick")
+
+        distances = pd.DataFrame(dm.matrix, index=dm.names, columns=dm.names)
+
+        return Phylogeny(
+            name="ANI",
+            tree=tree,
+            distances=distances
+        )

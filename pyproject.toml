@@ -29,6 +29,7 @@ dependencies = [
   "statsmodels>=0.14", # FDR correction in volcano and compare-contrasts
   "marimo>=0.8.0", # parameters.py (Parameters class for marimo notebooks)
   "matplotlib>=3.9.4",
+  "biopython>=1.85",
 ]
 
 [project.optional-dependencies]
