@@ -318,7 +318,7 @@ class Pangenome(Dataset):
             layout=go.Layout(
                 xaxis_title="Number of Genomes",
                 yaxis_title="Number of Genes",
-                yaxis_range=[0, rf["75%"].max()],
+                yaxis_range=[0, None],
                 template="plotly_white",
                 width=width,
                 height=height
