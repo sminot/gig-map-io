@@ -240,6 +240,11 @@ class Pangenome(Dataset):
             width=width,
             height=height
         )
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=[0, 1, 2, 3, 4, 5],
+            ticktext=["1", "10", "100", "1k", "10k", "100k"]
+        )
         # If save_image was provided, use the string as the file
         # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
