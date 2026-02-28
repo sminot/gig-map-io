@@ -125,7 +125,7 @@ class ContrastMetagenomes(Dataset):
             y="neg_log10_qvalue",
             hover_data=df.columns.values,
             hover_name="feature",
-            template="simple_white",
+            template="plotly_white",
             labels=dict(
                 Estimate_clipped="Effect Size",
                 neg_log10_qvalue="-log10(q-value)",
@@ -173,7 +173,7 @@ class ContrastMetagenomes(Dataset):
         fig = px.histogram(
             data_frame=df,
             y="abundance",
-            template="simple_white",
+            template="plotly_white",
             width=width,
             height=height,
             **kwargs

@@ -235,7 +235,7 @@ class Pangenome(Dataset):
             x=bins,
             y=counts,
             labels={'x':"Pangenome Bin Size (# of Genes)", 'y':'Total Gene Content'},
-            template="simple_white",
+            template="plotly_white",
             hover_name=bin_names,
             width=width,
             height=height
@@ -314,7 +314,7 @@ class Pangenome(Dataset):
                 xaxis_title="Number of Genomes",
                 yaxis_title="Number of Genes",
                 yaxis_range=[0, rf["75%"].max()],
-                template="simple_white",
+                template="plotly_white",
                 width=width,
                 height=height
             )
