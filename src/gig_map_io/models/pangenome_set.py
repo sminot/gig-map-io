@@ -67,3 +67,43 @@ class PangenomeSet(DatasetDict):
 
         save_image(fig, file_prefix)
         return fig
+
+    def bin_size_histogram(self,
+        col_wrap: int = 3,
+        width: int = 800,
+        height: int = 800,
+        horizontal_spacing: float = 0.05,
+        file_prefix: str | None = None
+    ) -> go.Figure:
+        """
+        Histogram of bin sizes, faceted by pangenome.
+        """
+        fig = make_subplots(
+            rows=len(self.pangenomes) // col_wrap + 1,
+            cols=col_wrap,
+            shared_yaxes=False,
+            shared_xaxes=False,
+            horizontal_spacing=horizontal_spacing,
+            subplot_titles=[pangenome for pangenome in self.pangenomes.keys()]
+        )
+        for i, pangenome in enumerate(self.pangenomes.keys()):
+            for trace in self.pangenomes[pangenome].bin_size_histogram().data:
+                fig.add_trace(
+                    trace,
+                    row=i // col_wrap + 1,
+                    col=i % col_wrap + 1
+                )
+
+        fig.update_layout(
+            height=height,
+            width=width,
+            template="plotly_white"
+        )
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=[0, 1, 2, 3, 4, 5],
+            ticktext=["1", "10", "100", "1k", "10k", "100k"]
+        )
+
+        save_image(fig, file_prefix)
+        return fig
