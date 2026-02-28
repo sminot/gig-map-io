@@ -10,10 +10,12 @@ from .compare_multiple_metagenomes import CompareMultipleMetagenomes
 from .contrast_metagenomes import ContrastMetagenomes
 from .pangenome import Pangenome
 from .pangenome_phylogeny import PangenomePhylogeny
+from .pangenome_set import PangenomeSet
 
 __all__ = [
     "CompareMultipleMetagenomes",
     "ContrastMetagenomes",
     "Pangenome",
     "PangenomePhylogeny",
+    "PangenomeSet",
 ]

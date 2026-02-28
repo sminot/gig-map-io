@@ -17,29 +17,17 @@ from .core import (
     CompareMultipleMetagenomes,
     ContrastMetagenomes,
     Pangenome,
+    PangenomeSet,
     PangenomePhylogeny,
 )
 from .parameters import Parameters
-from .plots import (
-    plot_bin_abundance,
-    plot_bin_phylogeny,
-    plot_compare_contrasts,
-    plot_double_volcano,
-    plot_estimate_scatter,
-    plot_volcano,
-)
 
 __all__ = [
     "CompareMultipleMetagenomes",
     "ContrastMetagenomes",
     "Pangenome",
+    "PangenomeSet",
     "PangenomePhylogeny",
-    "Parameters",
-    "plot_bin_abundance",
-    "plot_bin_phylogeny",
-    "plot_compare_contrasts",
-    "plot_double_volcano",
-    "plot_estimate_scatter",
-    "plot_volcano",
+    "Parameters"
 ]
 
