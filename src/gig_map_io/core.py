@@ -8,7 +8,7 @@ This module maintains backward compatibility for code that imports from
 from __future__ import annotations
 
 from .models import (
-    CompareMultipleMetagenomes,
+    ContrastMetagenomesSet,
     ContrastMetagenomes,
     Pangenome,
     PangenomePhylogeny,
@@ -16,7 +16,7 @@ from .models import (
 )
 
 __all__ = [
-    "CompareMultipleMetagenomes",
+    "ContrastMetagenomesSet",
     "ContrastMetagenomes",
     "Pangenome",
     "PangenomePhylogeny",
