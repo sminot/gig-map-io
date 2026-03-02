@@ -42,6 +42,7 @@ class PangenomeSet(DatasetDict):
         width: int = 500,
         height: int = 400,
         horizontal_spacing: float = 0.05,
+        vertical_spacing: float = 0.05,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
@@ -53,6 +54,7 @@ class PangenomeSet(DatasetDict):
             shared_yaxes=False,
             shared_xaxes=False,
             horizontal_spacing=horizontal_spacing,
+            vertical_spacing=vertical_spacing,
             subplot_titles=[pangenome for pangenome in self.pangenomes.keys()]
         )
         for i, pangenome in enumerate(self.pangenomes.keys()):
@@ -64,6 +66,10 @@ class PangenomeSet(DatasetDict):
                 )
 
         fig.update_layout(height=height, width=width)
+
+        # Left-align the subplot titles
+        for i in range(len(fig.layout.annotations)):
+            fig.layout.annotations[i].update(x=0.02, xanchor='left', xref=f'x{i+1}')
 
         save_image(fig, file_prefix)
         return fig
