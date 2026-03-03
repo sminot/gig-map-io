@@ -6,7 +6,7 @@ from functools import cached_property, lru_cache
 import hashlib
 from pathlib import Path
 import sys
-from typing import Dict, List
+from typing import Any, Dict, List
 from Bio import Phylo
 import pandas as pd
 import numpy as np
@@ -122,6 +122,14 @@ class Pangenome(Dataset):
         return int(self.gene_bins.dropna(subset=["bin"]).shape[0])
 
     @cached_property
+    def align_genomes_long(self) -> pd.DataFrame:
+        """
+        Content of align/genomes.aln.csv.gz (long format).
+        """
+        path = self.directory / "align" / "genomes.aln.csv.gz"
+        return pd.read_csv(path, low_memory=False, index_col=0)
+
+    @cached_property
     def genome_content(self) -> pd.DataFrame:
         """
         Genome content DataFrame loaded from bin_pangenome/genome_content.long.csv.
@@ -202,6 +210,140 @@ class Pangenome(Dataset):
         # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
 
+        return fig
+
+    def calc_membership_vs_distance(
+        self,
+        min_n_genomes: int = 10,
+        n_bins: int = 100,
+        n_genes: int = 100,
+        max_distance: int = 1000000
+    ) -> pd.DataFrame:
+        """
+        For a random subset of genes, compute how similar they are in terms
+        of their membership across all genomes, and then also compute their
+        typical physical distance across those genomes (when they are both present).
+        Then plot the relationship between these two metrics.
+
+        To prevent a skewing by bin size, we'll randomly select a subset of bins
+        and then randomly select a subset of genes from each bin.
+
+        Parameters
+        ----------
+        min_n_genomes: int
+            Minimum number of genomes that a gene must be present in to be considered.
+        n_bins: int
+            Number of bins to select.
+        n_genes: int
+            Number of genes to select from each bin (up to the size of the bin).
+        max_distance: int
+            Maximum distance to consider for the genomic coordinates (in bp).
+
+        Returns
+        -------
+        DataFrame containing the membership and distance metrics.
+        """
+
+        n_genomes_per_gene = (
+            self.align_genomes_long
+            .reindex(columns=["sseqid", "genome"])
+            .drop_duplicates()
+            ["sseqid"]
+            .value_counts()
+        )
+        genes_passing_filter = n_genomes_per_gene.loc[lambda x: x >= min_n_genomes].index.tolist()
+
+        # Subset to just these genes
+        gene_bins = self.gene_bins.loc[self.gene_bins["gene_id"].isin(genes_passing_filter)]
+
+        # Get the bin membership and select a set of genes from each
+        bins = gene_bins["bin"].sample(n=n_bins).tolist()
+        genes = (
+            gene_bins.loc[gene_bins["bin"].isin(bins)]
+            .groupby("bin")
+            .apply(lambda x: x.sample(n=min(n_genes, len(x))), include_groups=False)
+            ["gene_id"]
+            .tolist()
+        )
+
+        # Subset the align_genomes_long DataFrame to just the selected genes
+        df = (
+            self.align_genomes_long
+            .loc[self.align_genomes_long["sseqid"].isin(genes)]
+            .assign(
+                gene_position=lambda d: d["qstart"] + d["qend"] / 2
+            )
+        )
+
+        # Compare each pair of genes to compute the membership and distance
+        output = []
+        for gene1, df1 in df.groupby("sseqid"):
+            for gene2, df2 in df.groupby("sseqid"):
+                if gene1 <= gene2:
+                    continue
+                output.append(dict(
+                    gene1=gene1,
+                    gene2=gene2,
+                    membership=len(set(df1["genome"]) & set(df2["genome"])) / len(set(df1["genome"]) | set(df2["genome"])),
+                    distance=self._compute_gene_distance(df1, df2, max_distance)
+                ))
+
+        return pd.DataFrame(output)
+
+    def _compute_gene_distance(self, df1: pd.DataFrame, df2: pd.DataFrame, max_distance: int) -> float:
+        """
+        Compute the distance between two genes.
+        """
+        df = pd.concat([
+            df1.assign(gene=lambda d: "gene1"),
+            df2.assign(gene=lambda d: "gene2")
+        ]).pivot(
+            index=["genome", "qseqid"],
+            columns="gene",
+            values="gene_position"
+        ).dropna()
+
+        if df.shape[0] == 0:
+            return max_distance
+        else:
+            return min(max_distance, np.abs(df["gene1"] - df["gene2"]).mean())
+
+    def compare_membership_vs_distance(
+        self,
+        n_bins: int = 100,
+        n_genes: int = 100,
+        min_n_genomes: int = 10,
+        width: int = 500,
+        height: int = 400,
+        file_prefix: str | None = None,
+        **kwargs: dict[str, Any]
+    ) -> go.Figure:
+        """
+        For a random subset of genes, compute how similar they are in terms
+        of their membership across all genomes, and then also compute their
+        typical physical distance across those genomes (when they are both present).
+        Then plot the relationship between these two metrics.
+        """
+
+        df = self.calc_membership_vs_distance(min_n_genomes, n_bins, n_genes)
+
+        fig = px.scatter(
+            data_frame=df,
+            x="distance",
+            y="membership",
+            template="plotly_white",
+            trendline="lowess",
+            labels=dict(
+                distance="Mean Distance (bp)",
+                membership="Genome Membership<br>(Jaccard Similarity)"
+            ),
+            width=width,
+            height=height,
+            log_x=True,
+            **kwargs
+        )
+
+        save_image(fig, file_prefix)
         return fig
 
     def bin_size_histogram(
