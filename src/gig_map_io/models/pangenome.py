@@ -215,7 +215,7 @@ class Pangenome(Dataset):
     def calc_membership_vs_distance(
         self,
         min_n_genomes: int = 10,
-        n_bins: int = 100,
+        max_n_genomes: int = 100,
         n_genes: int = 100,
         max_distance: int = 1000000
     ) -> pd.DataFrame:
@@ -232,8 +232,8 @@ class Pangenome(Dataset):
         ----------
         min_n_genomes: int
             Minimum number of genomes that a gene must be present in to be considered.
-        n_bins: int
-            Number of bins to select.
+        max_n_genomes: int
+            Maximum number of genomes that a gene can be present in to be considered.
         n_genes: int
             Number of genes to select from each bin (up to the size of the bin).
         max_distance: int
@@ -251,20 +251,10 @@ class Pangenome(Dataset):
             ["sseqid"]
             .value_counts()
         )
-        genes_passing_filter = n_genomes_per_gene.loc[lambda x: x >= min_n_genomes].index.tolist()
+        genes_passing_filter = n_genomes_per_gene.loc[lambda x: (x >= min_n_genomes) & (x <= max_n_genomes)].index.tolist()
 
-        # Subset to just these genes
-        gene_bins = self.gene_bins.loc[self.gene_bins["gene_id"].isin(genes_passing_filter)]
-
-        # Get the bin membership and select a set of genes from each
-        bins = gene_bins["bin"].sample(n=n_bins).tolist()
-        genes = (
-            gene_bins.loc[gene_bins["bin"].isin(bins)]
-            .groupby("bin")
-            .apply(lambda x: x.sample(n=min(n_genes, len(x))), include_groups=False)
-            ["gene_id"]
-            .tolist()
-        )
+        # Pick a random subset of the genes
+        genes = np.random.choice(genes_passing_filter, size=n_genes, replace=False)
 
         # Subset the align_genomes_long DataFrame to just the selected genes
         df = (
@@ -310,9 +300,9 @@ class Pangenome(Dataset):
 
     def compare_membership_vs_distance(
         self,
-        n_bins: int = 100,
         n_genes: int = 100,
         min_n_genomes: int = 10,
+        max_n_genomes: int = 100,
         width: int = 500,
         height: int = 400,
         file_prefix: str | None = None,
@@ -325,22 +315,31 @@ class Pangenome(Dataset):
         Then plot the relationship between these two metrics.
         """
 
-        df = self.calc_membership_vs_distance(min_n_genomes, n_bins, n_genes)
+        df = (
+            self.calc_membership_vs_distance(min_n_genomes, max_n_genomes, n_genes)
+            .assign(
+                distance_log10=lambda d: np.log10(d["distance"]),
+                membership_bins=lambda d: d["membership"].apply(lambda x: round(x, 1))
+            )
+        )
 
-        fig = px.scatter(
+        fig = px.box(
             data_frame=df,
-            x="distance",
-            y="membership",
+            x="membership_bins",
+            y="distance_log10",
             template="plotly_white",
-            trendline="lowess",
             labels=dict(
-                distance="Mean Distance (bp)",
-                membership="Genome Membership<br>(Jaccard Similarity)"
+                distance_log10="Mean Distance (bp)",
+                membership_bins="Genome Membership<br>(Jaccard Similarity)"
             ),
             width=width,
             height=height,
-            log_x=True,
             **kwargs
+        )
+        fig.update_yaxes(
+            tickmode='array',
+            tickvals=[0, 1, 2, 3, 4, 5, 6],
+            ticktext=["1", "10", "100", "1k", "10k", "100k", "1M"]
         )
 
         save_image(fig, file_prefix)
