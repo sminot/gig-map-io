@@ -345,13 +345,10 @@ class Pangenome(Dataset):
         save_image(fig, file_prefix)
         return fig
 
-    def bin_size_histogram(
+    def bin_size_df(
         self,
         bins: int = 30,
-        width: int = 500,
-        height: int = 400,
-        file_prefix: str | None = None
-    ) -> go.Figure:
+    ) -> pd.DataFrame:
         """
         Histogram of bin sizes.
         """
@@ -372,12 +369,32 @@ class Pangenome(Dataset):
         ]
         bins = 0.5 * (bins[:-1] + bins[1:])
 
+        return pd.DataFrame(dict(
+            bin_size=bins,
+            count=counts,
+            bin_names=bin_names
+        ))
+
+    def bin_size_histogram(
+        self,
+        bins: int = 30,
+        width: int = 500,
+        height: int = 400,
+        file_prefix: str | None = None
+    ) -> go.Figure:
+
+        df = self.bin_size_df(bins)
+
         fig = px.bar(
-            x=bins,
-            y=counts,
-            labels={'x':"Pangenome Bin Size (# of Genes)", 'y':'Total Gene Content'},
+            data_frame=df,
+            x="bin_size",
+            y="count",
+            labels=dict(
+                bin_size="Pangenome Bin Size (# of Genes)",
+                count="Total Gene Content"
+            ),
             template="plotly_white",
-            hover_name=bin_names,
+            hover_name="bin_names",
             width=width,
             height=height
         )
