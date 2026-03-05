@@ -409,23 +409,32 @@ class Pangenome(Dataset):
 
         return fig
 
-    @lru_cache
-    def rarefaction_curve_data(_self, max_genomes: int = 100) -> pd.DataFrame:
-        df = _self.bin_presence_wide * _self.bin_size
-        return pd.DataFrame([
-            dict(
-                n_genomes=n_genomes,
-                **pd.Series([
-                    df.sample(n_genomes).max().sum()
-                    for rep in range(100)
-                ]).describe()
-            )
-            for n_genomes in range(1, min(max_genomes, df.shape[0]))
-        ])
+    def rarefaction_curve_data(_self, n_reps: int = 10) -> pd.DataFrame:
+        data = []
+        for rep in range(n_reps):
+            # Take the bin presence matrix
+            bin_presence = _self.bin_presence_wide.copy()
+            # Shuffle the rows
+            bin_presence = bin_presence.sample(frac=1).reset_index(drop=True)
+            # Compute the cumulative sum by column (bin)
+            cs = bin_presence.cumsum()
+            # For each row, count the number of genes recovered
+            n_genes = (cs > 0) * _self.bin_size
+            data.append(pd.DataFrame(dict(
+                n_genomes=list(range(1, bin_presence.shape[0] + 1)),
+                n_genes=n_genes.sum(axis=1)
+            )))
+        return (
+            pd.concat(data)
+            .groupby("n_genomes")
+            ["n_genes"]
+            .describe()
+            .reset_index()
+        )
 
     def rarefaction_curve(
         self,
-        max_genomes: int = 100,
+        n_reps: int = 10,
         width: int = 500,
         height: int = 400,
         file_prefix: str | None = None
@@ -435,15 +444,15 @@ class Pangenome(Dataset):
 
         Parameters
         ----------
-        max_genomes: int
-            Maximum number of genomes to simulate.
+        n_reps: int
+            Number of rarefaction replicates to simulate.
 
         Returns
         -------
         Plotly figure of the rarefaction curve.
         """
         # Simulate the number of genes recovered with different numbers of subsampled genomes
-        rf = self.rarefaction_curve_data(max_genomes)
+        rf = self.rarefaction_curve_data(n_reps)
 
         fig = go.Figure(
             data=[
@@ -482,6 +491,12 @@ class Pangenome(Dataset):
                 height=height
             )
         )
+
+        # Make the x axis log scale
+        fig.update_xaxes(
+            type="log"
+        )
+
         # If save_image was provided, use the string as the file
         # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
