@@ -6,8 +6,10 @@ import sys
 from typing import Dict
 
 from plotly.subplots import make_subplots
+import plotly.express as px
 from plotly import graph_objects as go
-
+import pandas as pd
+import numpy as np
 from gig_map_io.helpers.save_image import save_image
 
 from .pangenome import Pangenome
@@ -75,43 +77,48 @@ class PangenomeSet(DatasetDict):
         return fig
 
     def bin_size_histogram(self,
-        col_wrap: int = 3,
-        width: int = 800,
-        height: int = 800,
-        horizontal_spacing: float = 0.05,
+        bins: int = 30,
+        width: int = 500,
+        height: int = 400,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
         Histogram of bin sizes, faceted by pangenome.
         """
-        fig = make_subplots(
-            rows=len(self.pangenomes) // col_wrap + 1,
-            cols=col_wrap,
-            shared_yaxes=False,
-            shared_xaxes=False,
-            horizontal_spacing=horizontal_spacing,
-            subplot_titles=[pangenome for pangenome in self.pangenomes.keys()]
-        )
-        for i, pangenome in enumerate(self.pangenomes.keys()):
-            for trace in self.pangenomes[pangenome].bin_size_histogram().data:
-                fig.add_trace(
-                    trace,
-                    row=i // col_wrap + 1,
-                    col=i % col_wrap + 1
-                )
+        # Set the boundaries of the bins to be the same for all pangenomes
+        max_bin_size = max([pg.bin_size.max() for pg in self.pangenomes.values()])
+        min_bin_size = min([pg.bin_size.min() for pg in self.pangenomes.values()])
+        bins = np.linspace(np.log10(min_bin_size), np.log10(max_bin_size), bins + 1)
 
-        fig.update_layout(
-            height=height,
+        df = pd.concat([
+            pangenome.bin_size_df(bins).assign(pangenome=pangenome_name)
+            for pangenome_name, pangenome in self.pangenomes.items()
+        ])
+
+        fig = px.bar(
+            data_frame=df,
+            x="bin_size",
+            y="count",
+            color="pangenome",
+            labels=dict(
+                bin_size="Pangenome Bin Size (# of Genes)",
+                count="Total Gene Content",
+                pangenome="Pangenome"
+            ),
+            template="plotly_white",
+            hover_name="bin_names",
             width=width,
-            template="plotly_white"
+            height=height
         )
         fig.update_xaxes(
             tickmode='array',
             tickvals=[0, 1, 2, 3, 4, 5],
             ticktext=["1", "10", "100", "1k", "10k", "100k"]
         )
-
+        # If save_image was provided, use the string as the file
+        # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
+
         return fig
 
     def rarefaction_curve(
