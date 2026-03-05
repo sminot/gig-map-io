@@ -510,7 +510,7 @@ class Pangenome(Dataset):
         height: int = 5,
         remove_gene_id = True,
         remove_org_tag = True,
-        text_offset = 0.05,
+        text_offset = 0.025,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
@@ -534,13 +534,13 @@ class Pangenome(Dataset):
             )
         )
 
-        max_y = np.max([coords['start'].max(), coords['stop'].max()])
-        min_y = np.min([coords['start'].min(), coords['stop'].min()])
-        span_y = max_y - min_y
+        max_x = np.max([coords['start'].max(), coords['stop'].max()])
+        min_x = np.min([coords['start'].min(), coords['stop'].min()])
+        span_x = max_x - min_x
 
         coords = coords.assign(
-            start_y=lambda d: (d['start'] - min_y) / span_y,
-            stop_y=lambda d: (d['stop'] - min_y) / span_y
+            start_x=lambda d: (d['start'] - min_x) / span_x,
+            stop_x=lambda d: (d['stop'] - min_x) / span_x
         )
 
         fig, ax = plt.subplots(figsize=(width, height))
@@ -548,22 +548,52 @@ class Pangenome(Dataset):
 
             ax.annotate(
                 "",
-                xytext=(0, r['start_y']),
-                xy=(0, r['stop_y']),
+                xytext=(r['start_x'], 0),
+                xy=(r['stop_x'], 0),
                 arrowprops=dict(arrowstyle="->")
             )
-            ax.plot([0, 0], [r['start_y'], r['stop_y']], linewidth=0)
+            ax.plot([r['start_x'], r['stop_x']], [0, 0], linewidth=0)
 
             ax.annotate(
                 '',
-                xytext=(text_offset, (ix + 0.75) / coords.shape[0]),
-                xy=(text_offset / 10., np.mean([r['start_y'], r['stop_y']])),
+                xytext=((ix + 0.5) / coords.shape[0], text_offset),
+                xy=(np.mean([r['start_x'], r['stop_x']]), text_offset / 5.),
                 arrowprops=dict(arrowstyle="-"),
                 horizontalalignment='left',  # Align text to the right of its position
                 verticalalignment='center'
             )
-            ax.text(text_offset, (ix + 0.5) / coords.shape[0], r['label'])
-        
+            ax.text(
+                (ix + 0.5) / coords.shape[0],
+                text_offset,
+                r['label'],
+                rotation=90,
+                horizontalalignment='center',
+                verticalalignment='bottom'
+            )
+
+        # Draw a line underneath the entire gene map
+        ax.annotate(
+            '',
+            xytext=(0, - text_offset / 5.),
+            xy=(1, - text_offset / 5.),
+            arrowprops=dict(arrowstyle="|-|")
+        )
+
+        # Write the size underneath
+        if span_x > 1000000:
+            size_label = f"{span_x / 1000000:.1f} Mb"
+        elif span_x > 1000:
+            size_label = f"{span_x / 1000:.1f} Kb"
+        else:
+            size_label = f"{span_x:.0f} bp"
+        ax.text(
+            0.5,
+            - (text_offset),
+            size_label,
+            horizontalalignment='center',
+            verticalalignment='bottom'
+        )
+
         ax.axis("off")
 
         # If save_image was provided, use the string as the file
