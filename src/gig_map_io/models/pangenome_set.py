@@ -123,38 +123,40 @@ class PangenomeSet(DatasetDict):
 
     def rarefaction_curve(
         self,
-        col_wrap: int = 3,
-        width: int = 800,
-        height: int = 800,
-        horizontal_spacing: float = 0.05,
+        n_reps: int = 10,
+        width: int = 500,
+        height: int = 400,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
         Rarefaction curve of the pangenomes, faceted by pangenome.
         """
-        fig = make_subplots(
-            rows=len(self.pangenomes) // col_wrap + 1,
-            cols=col_wrap,
-            shared_yaxes=False,
-            shared_xaxes=False,
-            horizontal_spacing=horizontal_spacing,
-            subplot_titles=[pangenome for pangenome in self.pangenomes.keys()]
-        )
-        for i, pangenome in enumerate(self.pangenomes.keys()):
-            for trace in self.pangenomes[pangenome].rarefaction_curve().data:
-                fig.add_trace(
-                    trace,
-                    row=i // col_wrap + 1,
-                    col=i % col_wrap + 1
-                )
 
-        fig.update_layout(
-            height=height,
+        # Simulate the number of genes recovered with different numbers of subsampled genomes
+        rf = pd.concat([
+            pangenome.rarefaction_curve_data(n_reps).assign(pangenome=pangenome_name)
+            for pangenome_name, pangenome in self.pangenomes.items()
+        ]).rename(columns={"50%": "n_genes"})
+
+        fig = px.line(
+            data_frame=rf,
+            x="n_genomes",
+            y="n_genes",
+            color="pangenome",
+            labels=dict(
+                n_genomes="Number of Genomes",
+                n_genes= "Number of Genes",
+                pangenome="Pangenome"
+            ),
+            template="plotly_white",
             width=width,
-            template="plotly_white"
+            height=height
         )
-        fig.update_yaxes(
-            range=[0, None]
-        )
+        point_df = rf.sort_values(by=["pangenome","n_genomes"]).groupby("pangenome").tail(1)
+        for trace in px.scatter(data_frame=point_df, x="n_genomes", y="n_genes", color="pangenome").data:
+            trace.update(showlegend=False)
+            fig.add_trace(trace)
+        fig.update_xaxes(type="log")
+        fig.update_yaxes(range=[0, None])
         save_image(fig, file_prefix)
         return fig
