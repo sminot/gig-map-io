@@ -14,7 +14,7 @@ from statsmodels.stats.multitest import multipletests
 
 from gig_map_io.helpers.make_lines import make_lines
 from gig_map_io.helpers.save_image import save_image
-
+from gig_map_io.helpers.format_pvalue import format_pvalue
 from .contrast_metagenomes import ContrastMetagenomes
 from .dataset_dict import DatasetDict
 
@@ -213,11 +213,12 @@ class ContrastMetagenomesSet(DatasetDict):
                     colorscale="RdBu",
                     texttemplate="%{text}",
                     zmid=0,
+                    showscale=False,
                 )
             ]
         )
         fig.update_layout(
-            title=f"Chi-squared test (p={p:.3f})",
+            title=f"Chi-squared test (p={format_pvalue(p)})",
             xaxis_title=self_label,
             yaxis_title=comparitor_label,
             width=width,
