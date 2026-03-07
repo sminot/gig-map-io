@@ -1,6 +1,7 @@
 from functools import cached_property
 from logging import getLogger
 import logging
+from scipy import stats
 from pathlib import Path
 import sys
 from typing import Any, Dict, Iterator
@@ -47,6 +48,10 @@ class ContrastMetagenomesSet(DatasetDict):
     def __len__(self) -> int:
         return len(self.contrast_metagenomes)
 
+    @cached_property
+    def pangenome_names(self) -> list[str]:
+        return list(self.contrast_metagenomes.keys())
+
     def __contains__(self, pangenome_name: str) -> bool:
         return pangenome_name in self.contrast_metagenomes
 
@@ -64,12 +69,19 @@ class ContrastMetagenomesSet(DatasetDict):
         # Combine the association results from all contrasts
         # and recompute the FDR-adjusted q-values
         df = pd.concat([
-            contrast.association.assign(contrast=contrast_name)
-            for contrast_name, contrast in self.contrast_metagenomes.items()
+            contrast.association.assign(pangenome=pangenome_name)
+            for pangenome_name, contrast in self.contrast_metagenomes.items()
         ])
+        df = df.dropna(subset=["pvalue"])
         qvalue = multipletests(df["pvalue"], method="fdr_bh")[1]
-        df = df.assign(qvalue=qvalue, neg_log10_qvalue=-np.log10(qvalue))
-        df = df.sort_values(by=["contrast", "pvalue"])
+        df = df.assign(
+            qvalue=qvalue,
+            pvalue=df["pvalue"].clip(lower=df.loc[df["pvalue"] > 0, "pvalue"].min()),
+            neg_log10_qvalue=-np.log10(qvalue),
+            signed_log10_qvalue=lambda d: np.sign(d["Estimate"]) * -np.log10(qvalue),
+            signed_log10_pvalue=lambda d: np.sign(d["Estimate"]) * -np.log10(d["pvalue"]),
+        )
+        df = df.sort_values(by=["pangenome", "pvalue"])
         return df
 
     def volcano_plot(
@@ -97,14 +109,14 @@ class ContrastMetagenomesSet(DatasetDict):
             y="neg_log10_qvalue",
             hover_data=df.columns.values,
             hover_name="feature",
-            color="contrast",
+            color="pangenome",
             template="plotly_white",
             labels=dict(
                 Estimate_clipped="Effect Size",
                 neg_log10_qvalue="-log10(q-value)",
                 feature="Pangenome Bin",
                 mean_abund="Mean Abundance (RPKM)",
-                contrast="Contrast",
+                pangenome="Pangenome",
             ),
             size="mean_abund",
             width=width,
@@ -120,3 +132,162 @@ class ContrastMetagenomesSet(DatasetDict):
         save_image(fig, file_prefix)
 
         return fig
+
+    def compare_association(self, comparitor: 'ContrastMetagenomesSet') -> pd.DataFrame:
+        """
+        Compare the association results of two contrast sets.
+        """
+        return (
+            self.association
+            .merge(
+                comparitor.association,
+                on=["pangenome", "feature"],
+                suffixes=("_self", "_comparitor")
+            )
+            .assign(
+                mean_abund=lambda x: x[["mean_abund_self", "mean_abund_comparitor"]].mean(axis=1),
+            )
+            .dropna(subset=["pvalue_self", "pvalue_comparitor"])
+        )
+
+    def compare_sig_categories(
+        self,
+        comparitor: 'ContrastMetagenomesSet',
+        fdr: bool = True,
+        sig_thresh: float = 0.2,
+        self_label: str = "self",
+        comparitor_label: str = "comparitor",
+        width: int = 400,
+        height: int = 400,
+        file_prefix: str | None = None,
+        **kwargs
+    ) -> go.Figure:
+        """
+        Compare the significance categories of two contrast sets.
+        """
+        df = (
+            self.compare_association(comparitor)
+            .pipe(lambda d: _add_sig_categories(d, fdr, sig_thresh))
+        )
+
+        # Make a table comparing the significance categories
+        sig_table = df.pivot_table(
+            columns="self_sig",
+            index="comparitor_sig",
+            values="feature",
+            aggfunc="count",
+            fill_value=0,
+        ).reindex(
+            index=["<", "=", ">"],
+            columns=["<", "=", ">"],
+        )
+
+        # Run a chi-squared test to compare the significance categories
+        chi2, p, dof, expected = stats.chi2_contingency(sig_table)
+
+        # Make a table showing the percentage difference between the significance categories
+        # compared to the expected values
+        expected_table = pd.DataFrame(expected, index=sig_table.index, columns=sig_table.columns)
+        percent_diff_table = (sig_table - expected_table) / expected_table * 100
+
+        # Make a heatmap showing the percentage difference
+        # Include text in the cells showing the percentage difference
+        # with the +/-, %, and number of features
+        text = pd.DataFrame({
+            cname: {
+                iname: (
+                    f"{v:.1f}%<br>n={sig_table.loc[iname, cname]:,}"
+                    if v < 0
+                    else f"+{v:.1f}%<br>n={sig_table.loc[iname, cname]:,}")
+                    for iname, v in row.items()
+            }
+            for cname, row in percent_diff_table.iterrows()
+        })
+        fig = go.Figure(
+            data=[
+                go.Heatmap(
+                    z=percent_diff_table.values,
+                    x=percent_diff_table.columns.values,
+                    y=percent_diff_table.index.values,
+                    text=text.values,
+                    colorscale="RdBu",
+                    texttemplate="%{text}",
+                    zmid=0,
+                )
+            ]
+        )
+        fig.update_layout(
+            title=f"Chi-squared test (p={p:.3f})",
+            xaxis_title=self_label,
+            yaxis_title=comparitor_label,
+            width=width,
+            height=height,
+            xaxis=dict(scaleanchor="y", scaleratio=1),
+            plot_bgcolor="white",
+            coloraxis_showscale=False
+        )
+        save_image(fig, file_prefix)
+
+        return fig
+
+    def compare_sig_scatter(
+        self,
+        comparitor: 'ContrastMetagenomesSet',
+        self_label: str = "self",
+        comparitor_label: str = "comparitor",
+        fdr: bool = True,
+        sig_thresh: float = 0.2,
+        width: int = 500,
+        height: int = 400,
+        file_prefix: str | None = None,
+        **kwargs
+    ) -> go.Figure:
+        """
+        Scatter plot of q-values for two contrast sets.
+        """
+        df = self.compare_association(comparitor)
+        value_col = "signed_log10_qvalue" if fdr else "signed_log10_pvalue"
+        value_label = "signed -log10(q-value)" if fdr else "signed -log10(p-value)"
+
+        fig = px.scatter(
+            data_frame=df,
+            x=f"{value_col}_self",
+            y=f"{value_col}_comparitor",
+            color="pangenome",
+            template="plotly_white",
+            labels={
+                f"{value_col}_self": f"{value_label} ({self_label})",
+                f"{value_col}_comparitor": f"{value_label} ({comparitor_label})",
+                "pangenome": "Pangenome",
+            },
+            # size="mean_abund",
+            width=width,
+            height=height,
+            **kwargs
+        )
+
+        make_lines(0, "black", fig)
+        make_lines(-np.log10(sig_thresh), "red", fig)
+
+        save_image(fig, file_prefix)
+
+        return fig
+
+
+def _add_sig_categories(df: pd.DataFrame, fdr: bool = True, sig_thresh: float = 0.2) -> pd.DataFrame:
+    """
+    Add the significance categories to the dataframe.
+    """
+    sig_col = "qvalue" if fdr else "pvalue"
+    return df.assign(
+        self_sig=df.apply(lambda row: (
+            "=" if row[sig_col + "_self"] >= sig_thresh else (
+                ">" if row["Estimate_self"] > 0 else "<"
+            )
+        ), axis=1),
+        comparitor_sig=df.apply(lambda row: (
+            "=" if row[sig_col + "_comparitor"] >= sig_thresh else (
+                ">" if row["Estimate_comparitor"] > 0 else "<"
+            )
+        ), axis=1)
+    )
