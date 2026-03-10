@@ -7,6 +7,7 @@ import sys
 from typing import Any, Dict, Iterator
 
 from plotly import graph_objects as go
+from plotly.subplots import make_subplots
 import plotly.express as px
 import pandas as pd
 import numpy as np
@@ -92,6 +93,8 @@ class ContrastMetagenomesSet(DatasetDict):
         width: int = 500,
         height: int = 400,
         file_prefix: str | None = None,
+        xlabel: str = "Effect Size",
+        transpose: bool = False,
         **kwargs
     ) -> go.Figure:
         """
@@ -103,22 +106,36 @@ class ContrastMetagenomesSet(DatasetDict):
             .assign(Estimate_clipped=self.association["Estimate"].clip(lower=-max_abs_estimate, upper=max_abs_estimate))
         )
 
+        # Make a nice hover name
+        df = df.assign(
+            hover_name=df.apply(lambda r: f"{r['pangenome']}<br>{r['feature']}", axis=1).astype(str)
+        )
+
+        _coords = (
+            dict(x="Estimate_clipped", y="neg_log10_qvalue")
+            if not transpose
+            else dict(x="neg_log10_qvalue", y="Estimate_clipped")
+        )
+
         fig = px.scatter(
             data_frame=df,
-            x="Estimate_clipped",
-            y="neg_log10_qvalue",
-            hover_data=df.columns.values,
-            hover_name="feature",
+            x=_coords["x"],
+            y=_coords["y"],
+            hover_name="hover_name",
             color="pangenome",
             template="plotly_white",
             labels=dict(
-                Estimate_clipped="Effect Size",
+                Estimate_clipped="Effect Size (Clipped)",
+                Estimate="Effect Size",
                 neg_log10_qvalue="-log10(q-value)",
+                neg_log10_pvalue="-log10(p-value)",
+                signed_log10_qvalue="Signed -log10(q-value)",
+                signed_log10_pvalue="Signed -log10(p-value)",
                 feature="Pangenome Bin",
                 mean_abund="Mean Abundance (RPKM)",
                 pangenome="Pangenome",
             ),
-            size="mean_abund",
+            hover_data=["mean_abund", "Estimate", "signed_log10_qvalue", "signed_log10_pvalue", "pvalue"],
             width=width,
             height=height,
             **kwargs
@@ -126,6 +143,12 @@ class ContrastMetagenomesSet(DatasetDict):
         make_lines(0, "black", fig)
         make_lines(estimate_thresh, "red", fig, hline=False)
         make_lines(-np.log10(fdr_thresh), "red", fig, vline=False, neg=False)
+
+        # Specify the x-axis title
+        fig.update_xaxes(title_text=xlabel)
+
+        # Center the title
+        fig.update_layout(title_x=0.5)
 
         # If save_image was provided, use the string as the file
         # prefix to write out HTML, PDF, PNG, and JSON
@@ -155,6 +178,7 @@ class ContrastMetagenomesSet(DatasetDict):
         comparitor: 'ContrastMetagenomesSet',
         fdr: bool = True,
         sig_thresh: float = 0.2,
+        estimate_thresh: float = 0.25,
         self_label: str = "self",
         comparitor_label: str = "comparitor",
         width: int = 400,
@@ -167,7 +191,7 @@ class ContrastMetagenomesSet(DatasetDict):
         """
         df = (
             self.compare_association(comparitor)
-            .pipe(lambda d: _add_sig_categories(d, fdr, sig_thresh))
+            .pipe(lambda d: _add_sig_categories(d, fdr, sig_thresh, estimate_thresh))
         )
 
         # Make a table comparing the significance categories
@@ -219,6 +243,7 @@ class ContrastMetagenomesSet(DatasetDict):
         )
         fig.update_layout(
             title=f"Chi-squared test (p={format_pvalue(p)})",
+            title_x=0.5,
             xaxis_title=self_label,
             yaxis_title=comparitor_label,
             width=width,
@@ -250,18 +275,27 @@ class ContrastMetagenomesSet(DatasetDict):
         value_col = "signed_log10_qvalue" if fdr else "signed_log10_pvalue"
         value_label = "signed -log10(q-value)" if fdr else "signed -log10(p-value)"
 
+        # Display the pangenome name and feature name in the hover name
+        df = df.assign(
+            hover_name=df.apply(lambda r: f"{r['pangenome']}<br>{r['feature']}", axis=1).astype(str)
+        )
+
         fig = px.scatter(
             data_frame=df,
             x=f"{value_col}_self",
             y=f"{value_col}_comparitor",
             color="pangenome",
+            hover_name="hover_name",
             template="plotly_white",
             labels={
                 f"{value_col}_self": f"{value_label} ({self_label})",
                 f"{value_col}_comparitor": f"{value_label} ({comparitor_label})",
+                "pvalue_self": f"p-value ({self_label})",
+                "pvalue_comparitor": f"p-value ({comparitor_label})",
+                "feature": "Pangenome Bin",
                 "pangenome": "Pangenome",
             },
-            # size="mean_abund",
+            hover_data=[f"{value_col}_self", f"{value_col}_comparitor", "pvalue_self", "pvalue_comparitor"],
             width=width,
             height=height,
             **kwargs
@@ -274,21 +308,173 @@ class ContrastMetagenomesSet(DatasetDict):
 
         return fig
 
+    def compare_association_scatter(
+        self,
+        comparitor: 'ContrastMetagenomesSet',
+        self_label: str = "self",
+        comparitor_label: str = "comparitor",
+        fdr: bool = True,
+        sig_thresh: float = 0.2,
+        estimate_thresh: float = 0.25,
+        width: int = 500,
+        height: int = 400,
+        file_prefix: str | None = None,
+        **kwargs
+    ) -> go.Figure:
+        """
+        Scatter plot of association values for two contrast sets.
+        NOTE: Only show bins that are significant in both contrast sets.
+        """
+        sig_col = "qvalue" if fdr else "pvalue"
+        df = self.compare_association(comparitor)
+        df = df.loc[
+            (df[sig_col + "_self"] <= sig_thresh)
+            & (df[sig_col + "_comparitor"] <= sig_thresh)
+            & (df["Estimate_self"].abs() >= estimate_thresh)
+            & (df["Estimate_comparitor"].abs() >= estimate_thresh)
+        ]
 
-def _add_sig_categories(df: pd.DataFrame, fdr: bool = True, sig_thresh: float = 0.2) -> pd.DataFrame:
+        # Display the pangenome name and feature name in the hover name
+        df = df.assign(
+            hover_name=df.apply(lambda r: f"{r['pangenome']}<br>{r['feature']}", axis=1).astype(str)
+        )
+
+        fig = px.scatter(
+            data_frame=df,
+            x="Estimate_self",
+            y="Estimate_comparitor",
+            color="pangenome",
+            hover_name="hover_name",
+            template="plotly_white",
+            labels={
+                "Estimate_self": f"Estimate ({self_label})",
+                "Estimate_comparitor": f"Estimate ({comparitor_label})",
+                "pvalue_self": f"p-value ({self_label})",
+                "pvalue_comparitor": f"p-value ({comparitor_label})",
+                "qvalue_self": f"q-value ({self_label})",
+                "qvalue_comparitor": f"q-value ({comparitor_label})",
+                "pangenome": "Pangenome",
+                "feature": "Pangenome Bin",
+            },
+            hover_data=["Estimate_self", "Estimate_comparitor", "pvalue_self", "pvalue_comparitor", "qvalue_self", "qvalue_comparitor"],
+            width=width,
+            height=height,
+            **kwargs
+        )
+
+        make_lines(0, "black", fig)
+
+        save_image(fig, file_prefix)
+
+        return fig
+
+    def compare_volcano_with_estimate(
+        self,
+        comparitor: 'ContrastMetagenomesSet',
+        self_label: str = "self",
+        comparitor_label: str = "comparitor",
+        fdr: bool = True,
+        sig_thresh: float = 0.2,
+        estimate_thresh: float = 0.25,
+        max_abs_estimate: float = 2.5,
+        width: int = 600,
+        height: int = 600,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        Multi-panel figure combining the volcano plot for each contrast set with the association scatter plot.
+        """
+
+        # Make a multi-panel figure combining the volcano plot for each contrast set with the association scatter plot.
+        fig = make_subplots(
+            rows=2,
+            cols=2,
+            shared_xaxes=True,
+            shared_yaxes=True,
+            horizontal_spacing=0.06,
+            vertical_spacing=0.06
+        )
+        fig.add_traces(
+            self.volcano_plot(
+                estimate_thresh=estimate_thresh,
+                fdr_thresh=sig_thresh,
+                max_abs_estimate=max_abs_estimate,
+            ).data,
+            rows=2,
+            cols=2
+        )
+        fig.add_traces(
+            comparitor.volcano_plot(
+                estimate_thresh=estimate_thresh,
+                fdr_thresh=sig_thresh,
+                max_abs_estimate=max_abs_estimate,
+                transpose=True
+            ).data,
+            rows=1,
+            cols=1
+        )
+        fig.add_traces(
+            self.compare_association_scatter(
+                comparitor=comparitor,
+                fdr=fdr,
+                sig_thresh=sig_thresh,
+            ).data,
+            rows=1,
+            cols=2
+        )
+        fig.update_layout(
+            width=width,
+            height=height,
+            template="plotly_white",
+            showlegend=False,
+        )
+
+        make_lines(0, "black", fig)
+        make_lines(estimate_thresh, "red", fig, hline=False, row=2, col=2)
+        make_lines(estimate_thresh, "red", fig, vline=False, row=1, col=1)
+        make_lines(-np.log10(sig_thresh), "red", fig, vline=False, neg=False, row=2, col=2)
+        make_lines(-np.log10(sig_thresh), "red", fig, hline=False, neg=False, row=1, col=1)
+
+        sig_label = "q-value" if fdr else "p-value"
+        fig.update_xaxes(title_text=f"-log10({sig_label})", row=1, col=1)
+        fig.update_yaxes(title_text=f"Estimate ({comparitor_label})", row=1, col=1)
+        fig.update_xaxes(title_text=f"Estimate ({self_label})", row=2, col=2)
+        fig.update_yaxes(title_text=f"-log10({sig_label})", row=2, col=2)
+
+        save_image(fig, file_prefix)
+
+        return fig
+
+
+def _add_sig_categories(
+    df: pd.DataFrame,
+    fdr: bool = True,
+    sig_thresh: float = 0.2,
+    estimate_thresh: float = 0.25,
+) -> pd.DataFrame:
     """
     Add the significance categories to the dataframe.
     """
-    sig_col = "qvalue" if fdr else "pvalue"
+
     return df.assign(
-        self_sig=df.apply(lambda row: (
-            "=" if row[sig_col + "_self"] >= sig_thresh else (
-                ">" if row["Estimate_self"] > 0 else "<"
-            )
-        ), axis=1),
-        comparitor_sig=df.apply(lambda row: (
-            "=" if row[sig_col + "_comparitor"] >= sig_thresh else (
-                ">" if row["Estimate_comparitor"] > 0 else "<"
-            )
-        ), axis=1)
+        self_sig=df.apply(lambda row: _add_sig_category(row, "self", fdr, sig_thresh, estimate_thresh), axis=1),
+        comparitor_sig=df.apply(lambda row: _add_sig_category(row, "comparitor", fdr, sig_thresh, estimate_thresh), axis=1),
     )
+
+def _add_sig_category(
+    row: pd.Series,
+    label: str,
+    fdr: bool = True,
+    sig_thresh: float = 0.2,
+    estimate_thresh: float = 0.25,
+) -> str:
+    sig_col = ("qvalue" if fdr else "pvalue") + "_" + label
+    est_col = "Estimate_" + label
+    if row[sig_col] >= sig_thresh:
+        return "="
+    elif np.abs(row[est_col]) < estimate_thresh:
+        return "="
+    elif row[est_col] > 0:
+        return ">"
+    else:
+        return "<"

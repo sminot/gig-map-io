@@ -12,7 +12,8 @@ def make_lines(
     pos=True,
     neg=True,
     hline=True,
-    vline=True
+    vline=True,
+    **line_kwargs
 ) -> None:
     """
     Add threshold lines to a plot.
@@ -35,7 +36,7 @@ def make_lines(
         Whether to add a vertical line.
     """
 
-    line_kwargs = dict(line_dash="dash", line_width=2)
+    line_kwargs = dict(line_dash="dash", line_width=2, **line_kwargs)
 
     to_plot = []
     if pos:
