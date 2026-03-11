@@ -10,6 +10,8 @@ import plotly.express as px
 from plotly import graph_objects as go
 import pandas as pd
 import numpy as np
+from scipy import stats
+from statsmodels.stats.multitest import multipletests
 from gig_map_io.helpers.save_image import save_image
 
 from .pangenome import Pangenome
@@ -38,6 +40,142 @@ class PangenomeSet(DatasetDict):
 
     def __format__(self, format_spec: str) -> str:
         return f"PangenomeSet(directory_dict={self.directory_dict})"
+
+    @cached_property
+    def gene_bins(self) -> pd.DataFrame:
+        return pd.concat([
+            pangenome.gene_bins.assign(pangenome=pangenome_name)
+            for pangenome_name, pangenome in self.pangenomes.items()
+        ])
+
+    def find_enriched_annotation_terms(
+        self,
+        features: pd.MultiIndex,
+        min_count: int = 2,
+        alternative: str = "greater",
+    ) -> pd.DataFrame:
+        """
+        Find annotation terms statistically over-represented in the given set of bins
+        compared to the background of all bins in the PangenomeSet.
+
+        Parameters
+        ----------
+        features : pd.MultiIndex
+            MultiIndex with level names 'pangenome' and 'feature', where 'feature'
+            corresponds to the 'bin' column in gene_bins.
+        min_count : int
+            Minimum number of foreground bins a term must appear in to be tested.
+        alternative : str
+            Alternative hypothesis for Fisher's exact test ('greater', 'less', or 'two-sided').
+
+        Returns
+        -------
+        pd.DataFrame
+            Columns: term, n_foreground, n_background, n_foreground_total,
+                     n_background_total, odds_ratio, pvalue, qvalue
+            Sorted by pvalue ascending.
+        """
+
+        def _ngrams(text: str) -> set:
+            words = text.split()
+            return {" ".join(words[i:j]) for i in range(len(words)) for j in range(i + 1, len(words) + 1)}
+
+        def _sanitize_combined_name(combined_name: str) -> str:
+            if combined_name.endswith("]") and "[" in combined_name:
+                combined_name = combined_name.rsplit("[", 1)[0]
+            if combined_name.startswith("MULTISPECIES: "):
+                combined_name = combined_name.replace("MULTISPECIES: ", "")
+            return combined_name
+
+        # Drop rows where bin is NaN
+        gb = self.gene_bins.dropna(subset=["bin"])
+
+        # Build bin_terms: (pangenome, bin) -> set of n-gram terms
+        bin_terms = (
+            gb.groupby(["pangenome", "bin"])["combined_name"]
+            .apply(lambda names: set().union(*[_ngrams(_sanitize_combined_name(n)) for n in names]))
+        )
+
+        # Make sure that all of the features are in the pangenome set
+        for (pangenome, feature) in features:
+            if pangenome not in self.pangenomes:
+                raise ValueError(f"Pangenome {pangenome} not found in pangenome set")
+            if feature not in self.pangenomes[pangenome].bin_names:
+                raise ValueError(f"Feature {feature} not found in pangenome {pangenome}")
+
+        # Split into foreground and background
+        fg_index = set(zip(
+            features.get_level_values("pangenome"),
+            features.get_level_values("feature")
+        ))
+        fg_bins = {k: v for k, v in bin_terms.items() if k in fg_index}
+        bg_bins = {k: v for k, v in bin_terms.items() if k not in fg_index}
+
+        n_fg_total = len(fg_bins)
+        n_bg_total = len(bg_bins)
+
+        # Collect all terms that appear in foreground bins
+        fg_term_bins: dict = {}
+        for bin_key, terms in fg_bins.items():
+            for term in terms:
+                fg_term_bins.setdefault(term, set()).add(bin_key)
+
+        # Collect background term bin counts
+        bg_term_bins: dict = {}
+        for bin_key, terms in bg_bins.items():
+            for term in terms:
+                bg_term_bins.setdefault(term, set()).add(bin_key)
+
+        # Run Fisher's exact test for each term with sufficient foreground support
+        results = []
+        for term, fg_set in fg_term_bins.items():
+            a = len(fg_set)
+            if a < min_count:
+                continue
+            b = len(bg_term_bins.get(term, set()))
+            c = n_fg_total - a
+            d = n_bg_total - b
+            odds_ratio, pvalue = stats.fisher_exact([[a, b], [c, d]], alternative=alternative)
+            results.append({
+                "term": term,
+                "n_foreground": a,
+                "n_background": b,
+                "n_foreground_total": n_fg_total,
+                "n_background_total": n_bg_total,
+                "odds_ratio": odds_ratio,
+                "pvalue": pvalue,
+            })
+
+        if not results:
+            return pd.DataFrame(columns=[
+                "term", "n_foreground", "n_background",
+                "n_foreground_total", "n_background_total",
+                "odds_ratio", "pvalue", "qvalue"
+            ])
+
+        df = pd.DataFrame(results)
+
+        # Prune redundant shorter terms: drop term T if a longer super-term T' exists
+        # such that T is a substring of T' and pvalue(T') <= pvalue(T)
+        pvalue_map = dict(zip(df["term"], df["pvalue"]))
+        terms_to_drop = set()
+        all_terms = list(pvalue_map.keys())
+        for term in all_terms:
+            for other_term in all_terms:
+                if other_term == term:
+                    continue
+                # other_term is a longer super-term containing term as a contiguous phrase
+                if len(other_term) > len(term) and term in other_term and pvalue_map[other_term] <= pvalue_map[term]:
+                    terms_to_drop.add(term)
+                    break
+
+        df = df[~df["term"].isin(terms_to_drop)].copy()
+
+        # Apply FDR correction
+        reject, qvalues, _, _ = multipletests(df["pvalue"].values, method="fdr_bh")
+        df["qvalue"] = qvalues
+
+        return df.sort_values("pvalue").reset_index(drop=True)
 
     def bin_genome_heatmap(self,
         col_wrap: int = 3,
