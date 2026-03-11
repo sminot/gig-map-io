@@ -2,6 +2,7 @@ from functools import cached_property
 from logging import getLogger
 import logging
 from scipy import stats
+from scipy.cluster import hierarchy
 from pathlib import Path
 import sys
 from typing import Any, Dict, Iterator
@@ -162,6 +163,311 @@ class ContrastMetagenomesSet(DatasetDict):
 
         # If save_image was provided, use the string as the file
         # prefix to write out HTML, PDF, PNG, and JSON
+        save_image(fig, file_prefix)
+
+        return fig
+
+    def bin_abundance_heatmap(
+        self,
+        features: pd.MultiIndex,
+        annotation_cols: list[str] | None = None,
+        metadata: pd.DataFrame | None = None,
+        log_transform: bool = True,
+        width: int = 1000,
+        height: int = 800,
+        rpkm_height_fraction: float = 0.65,
+        annotation_width_fraction: float = 0.15,
+        rpkm_colorscale: str = "Blues",
+        corr_colorscale: str = "RdBu_r",
+        annotation_colorscale: str = "Viridis",
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        Multi-panel heatmap figure showing bin abundance patterns across samples.
+
+        Panels:
+          a) Heatmap of RPKM values (samples × features)
+          b) Heatmap of pairwise Spearman correlation coefficients (features × features)
+          c) [Optional] Heatmap of sample-level annotations (aligned with sample rows)
+
+        Parameters
+        ----------
+        features : pd.MultiIndex
+            MultiIndex with level names 'pangenome' and 'feature'. Each entry
+            references a bin from the corresponding ContrastMetagenomes object.
+        annotation_cols : list of str, optional
+            Columns from self.metadata (or the provided `metadata`) to display as
+            sample annotations. If None, no annotation heatmap is shown.
+        metadata : pd.DataFrame, optional
+            Sample-level metadata. Overrides self.metadata when provided. Index
+            must match specimen names; each column becomes a column in the annotation
+            heatmap (shown to the left of the RPKM heatmap). Categorical/string
+            columns are encoded as integer codes.
+        log_transform : bool
+            If True (default), display log₁₀(RPKM + 1) in the RPKM heatmap.
+        width : int
+            Figure width in pixels.
+        height : int
+            Figure height in pixels.
+        rpkm_height_fraction : float
+            Fraction of the figure height devoted to the RPKM heatmap (default 0.65).
+            The Spearman correlation heatmap takes the remaining fraction.
+        annotation_width_fraction : float
+            Fraction of the figure width devoted to the annotation heatmap (default 0.15).
+            The RPKM heatmap takes the remaining fraction. Ignored when no annotations
+            are shown.
+        rpkm_colorscale : str
+            Plotly colorscale name for the RPKM heatmap.
+        corr_colorscale : str
+            Plotly colorscale name for the Spearman correlation heatmap.
+        annotation_colorscale : str
+            Plotly colorscale name for the annotation heatmap.
+        file_prefix : str, optional
+            If provided, save the figure as HTML/PDF/PNG/JSON with this prefix.
+
+        Returns
+        -------
+        go.Figure
+        """
+
+        # ── 1. Build the combined RPKM DataFrame ─────────────────────────────
+        rpkm_dict = {}
+        for pangenome, feature in features:
+            if pangenome not in self.contrast_metagenomes:
+                logger.warning(f"Pangenome '{pangenome}' not found, skipping")
+                continue
+            cm = self.contrast_metagenomes[pangenome]
+            if feature not in cm.rpkm.columns:
+                logger.warning(
+                    f"Feature '{feature}' not found in pangenome '{pangenome}', skipping"
+                )
+                continue
+            label = f"{pangenome} / {feature}"
+            rpkm_dict[label] = cm.rpkm[feature]
+
+        if not rpkm_dict:
+            raise ValueError("No valid features found in the provided index")
+
+        rpkm = pd.DataFrame(rpkm_dict)
+
+        # ── 2. Sort rows (samples) and columns (features) by hierarchical clustering
+        def _hclust_order(df: pd.DataFrame) -> list:
+            """Return leaf order from hierarchical clustering; NaN filled with 0."""
+            if df.shape[0] < 2:
+                return list(range(df.shape[0]))
+            lnk = hierarchy.linkage(df.fillna(0).values, method="average", metric="euclidean")
+            return hierarchy.leaves_list(lnk).tolist()
+
+        rpkm = rpkm.iloc[_hclust_order(rpkm)]
+        rpkm = rpkm.T.iloc[_hclust_order(rpkm.T)].T
+
+        sorted_samples = rpkm.index.tolist()
+        sorted_features = rpkm.columns.tolist()
+
+        # ── 3. Optional log transform for display ─────────────────────────────
+        rpkm_display = np.log10(rpkm + 1) if log_transform else rpkm.copy()
+        rpkm_label = "log₁₀(RPKM+1)" if log_transform else "RPKM"
+
+        # ── 4. Spearman correlation between features (pairwise, ignores NaN) ──
+        corr_sorted = rpkm.corr(method="spearman").loc[sorted_features, sorted_features]
+
+        # ── 5. Encode annotations for display ────────────────────────────────
+        if annotation_cols is not None:
+            if metadata is None:
+                metadata = self.metadata
+            metadata = metadata.reindex(columns=annotation_cols)
+        else:
+            metadata = None
+        has_annotations = metadata is not None and not metadata.empty
+
+        # For each annotation column, determine if it is categorical (< 12 unique values).
+        # ann_cat_info maps col -> (ordered unique values, list of hex colors).
+        ann_cat_info: dict[str, tuple[list, list]] = {}
+        if has_annotations:
+            ann = metadata.reindex(index=sorted_samples)
+            for col in ann.columns:
+                s = ann[col]
+                n_unique = s.nunique(dropna=True)
+                if (not pd.api.types.is_numeric_dtype(s)) or n_unique < 12:
+                    unique_vals = sorted(s.dropna().unique().tolist(), key=str)
+                    colors = px.colors.qualitative.Dark24[:len(unique_vals)]
+                    ann_cat_info[col] = (unique_vals, colors)
+
+        # ── 6. Build subplot layout ───────────────────────────────────────────
+        #  Layout (with annotations):
+        #    Row 1 (tall):   [annot hm  | RPKM heatmap  ]  ← shared y
+        #    Row 2 (medium): [empty     | corr heatmap   ]
+        #
+        #  Column 2 subplots share x-axis (features aligned top-to-bottom).
+        #  Row 1 subplots share y-axis (samples aligned left-to-right).
+        #
+        #  Without annotations: single-column, 2 rows.
+
+        row_heights = [rpkm_height_fraction, 1.0 - rpkm_height_fraction]
+
+        if has_annotations:
+            specs = [
+                [{},  {}],
+                [None, {}],
+            ]
+            col_widths = [annotation_width_fraction, 1.0 - annotation_width_fraction]
+            rpkm_col = 2
+        else:
+            specs = [[{}], [{}]]
+            col_widths = None
+            rpkm_col = 1
+
+        n_cols = 2 if has_annotations else 1
+
+        fig = make_subplots(
+            rows=2,
+            cols=n_cols,
+            specs=specs,
+            shared_xaxes=True,
+            shared_yaxes=has_annotations,
+            column_widths=col_widths,
+            row_heights=row_heights,
+            horizontal_spacing=0.02,
+            vertical_spacing=0.04,
+        )
+
+        # ── 7. Add traces ─────────────────────────────────────────────────────
+
+        # a) RPKM heatmap
+        fig.add_trace(
+            go.Heatmap(
+                z=rpkm_display.values,
+                x=sorted_features,
+                y=sorted_samples,
+                colorscale=rpkm_colorscale,
+                name="RPKM",
+                colorbar=dict(
+                    title=rpkm_label,
+                    len=row_heights[0],
+                    yanchor="top",
+                    y=1.0,
+                    x=1.02,
+                ),
+            ),
+            row=1, col=rpkm_col,
+        )
+
+        # b) Spearman correlation heatmap
+        fig.add_trace(
+            go.Heatmap(
+                z=corr_sorted.values,
+                x=sorted_features,
+                y=sorted_features,
+                colorscale=corr_colorscale,
+                zmid=0,
+                name="Spearman r",
+                colorbar=dict(
+                    title="Spearman r",
+                    len=row_heights[1],
+                    yanchor="bottom",
+                    y=0.0,
+                    x=1.02,
+                ),
+            ),
+            row=2, col=rpkm_col,
+        )
+
+        # c) Sample annotations heatmap — one trace per column, using integer x
+        #    positions to avoid Plotly's categorical axis padding gap.
+        if has_annotations:
+            for col_idx, col in enumerate(ann.columns):
+                s = ann[col]
+                if col in ann_cat_info:
+                    unique_vals, colors = ann_cat_info[col]
+                    code_map = {v: i for i, v in enumerate(unique_vals)}
+                    n = len(unique_vals)
+                    z_col = [[code_map.get(v, np.nan)] for v in s]
+                    # Stepped discrete colorscale: each band covers [j/n, (j+1)/n].
+                    # Using zmin=-0.5, zmax=n-0.5 centers each code within its band.
+                    colorscale = []
+                    for j, color in enumerate(colors):
+                        colorscale.append([j / n, color])
+                        colorscale.append([(j + 1) / n, color])
+                    fig.add_trace(
+                        go.Heatmap(
+                            z=z_col,
+                            x=[col_idx],
+                            y=sorted_samples,
+                            colorscale=colorscale,
+                            zmin=-0.5,
+                            zmax=n - 0.5,
+                            showscale=False,
+                            name=col,
+                        ),
+                        row=1, col=1,
+                    )
+                    # Invisible scatter traces to drive the color legend
+                    for val, color in zip(unique_vals, colors):
+                        fig.add_trace(
+                            go.Scatter(
+                                x=[None],
+                                y=[None],
+                                mode="markers",
+                                marker=dict(color=color, symbol="square", size=10),
+                                name=f"{col}: {val}",
+                                legendgroup=col,
+                                legendgrouptitle=dict(text=col),
+                                showlegend=True,
+                            ),
+                            row=1, col=1,
+                        )
+                else:
+                    fig.add_trace(
+                        go.Heatmap(
+                            z=[[v] for v in s],
+                            x=[col_idx],
+                            y=sorted_samples,
+                            colorscale=annotation_colorscale,
+                            showscale=False,
+                            name=col,
+                        ),
+                        row=1, col=1,
+                    )
+
+        # ── 8. Update layout ──────────────────────────────────────────────────
+        has_cat_annotations = has_annotations and bool(ann_cat_info)
+        fig.update_layout(
+            width=width,
+            height=height,
+            template="plotly_white",
+            showlegend=has_cat_annotations,
+            legend=dict(
+                x=1.14,
+                y=0.5,
+                yanchor="middle",
+                xanchor="left",
+            ),
+        )
+
+        fig.update_yaxes(title_text="Samples", row=1, col=1 if has_annotations else rpkm_col)
+        fig.update_yaxes(title_text="Feature", row=2, col=rpkm_col)
+        fig.update_xaxes(title_text="Feature", row=2, col=rpkm_col)
+
+        # Hide x-tick labels on the top row (shared axis shows them at bottom)
+        fig.update_xaxes(showticklabels=False, row=1, col=rpkm_col)
+
+        # Hide y-tick labels on the RPKM, Spearman, and annotation heatmaps
+        fig.update_yaxes(showticklabels=False, row=1, col=rpkm_col)
+        fig.update_yaxes(showticklabels=False, row=2, col=rpkm_col)
+        if has_annotations:
+            fig.update_yaxes(showticklabels=False, row=1, col=1)
+            # Use integer x positions with named ticks and a tight range so that
+            # columns sit flush against each other with no categorical padding.
+            n_ann_cols = len(ann.columns)
+            fig.update_xaxes(
+                tickmode="array",
+                tickvals=list(range(n_ann_cols)),
+                ticktext=ann.columns.tolist(),
+                tickangle=90,
+                range=[-0.5, n_ann_cols - 0.5],
+                row=1, col=1,
+            )
+
         save_image(fig, file_prefix)
 
         return fig
@@ -442,6 +748,7 @@ class ContrastMetagenomesSet(DatasetDict):
         make_lines(0, "black", fig)
         make_lines(estimate_thresh, "red", fig, hline=False, row=2, col=2)
         make_lines(estimate_thresh, "red", fig, vline=False, row=1, col=1)
+        make_lines(estimate_thresh, "red", fig, row=2, col=2)
         make_lines(-np.log10(sig_thresh), "red", fig, vline=False, neg=False, row=2, col=2)
         make_lines(-np.log10(sig_thresh), "red", fig, hline=False, neg=False, row=1, col=1)
 
