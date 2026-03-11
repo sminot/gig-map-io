@@ -115,6 +115,13 @@ class Pangenome(Dataset):
         return int(self.gene_bins["bin"].dropna().nunique())
 
     @cached_property
+    def bin_names(self) -> list[str]:
+        """
+        List of unique (non-null) bin names in gene_bins.
+        """
+        return self.gene_bins["bin"].dropna().unique().tolist()
+
+    @cached_property
     def n_genes(self) -> int:
         """
         Number of genes which are part of bins in the pangenome.
