@@ -170,7 +170,7 @@ class ContrastMetagenomesSet(DatasetDict):
     def bin_abundance_heatmap(
         self,
         features: pd.MultiIndex,
-        annotation_cols: list[str] | None = None,
+        annotation_cols: list[str] | dict[str, str] | None = None,
         metadata: pd.DataFrame | None = None,
         log_transform: bool = True,
         width: int = 1000,
@@ -195,9 +195,10 @@ class ContrastMetagenomesSet(DatasetDict):
         features : pd.MultiIndex
             MultiIndex with level names 'pangenome' and 'feature'. Each entry
             references a bin from the corresponding ContrastMetagenomes object.
-        annotation_cols : list of str, optional
+        annotation_cols : list of str or dict, optional
             Columns from self.metadata (or the provided `metadata`) to display as
-            sample annotations. If None, no annotation heatmap is shown.
+            sample annotations. If a dict, keys are original column names and values
+            are display labels. If None, no annotation heatmap is shown.
         metadata : pd.DataFrame, optional
             Sample-level metadata. Overrides self.metadata when provided. Index
             must match specimen names; each column becomes a column in the annotation
@@ -275,7 +276,10 @@ class ContrastMetagenomesSet(DatasetDict):
         if annotation_cols is not None:
             if metadata is None:
                 metadata = self.metadata
-            metadata = metadata.reindex(columns=annotation_cols)
+            if isinstance(annotation_cols, dict):
+                metadata = metadata.reindex(columns=list(annotation_cols.keys())).rename(columns=annotation_cols)
+            else:
+                metadata = metadata.reindex(columns=annotation_cols)
         else:
             metadata = None
         has_annotations = metadata is not None and not metadata.empty
@@ -409,7 +413,7 @@ class ContrastMetagenomesSet(DatasetDict):
                                 y=[None],
                                 mode="markers",
                                 marker=dict(color=color, symbol="square", size=10),
-                                name=f"{col}: {val}",
+                                name=str(val),
                                 legendgroup=col,
                                 legendgrouptitle=dict(text=col),
                                 showlegend=True,
@@ -437,8 +441,8 @@ class ContrastMetagenomesSet(DatasetDict):
             template="plotly_white",
             showlegend=has_cat_annotations,
             legend=dict(
-                x=1.14,
-                y=0.5,
+                x=1.35,
+                y=1.0 - rpkm_height_fraction / 2,
                 yanchor="middle",
                 xanchor="left",
             ),
