@@ -66,6 +66,16 @@ class ContrastMetagenomesSet(DatasetDict):
         return getattr(self.contrast_metagenomes, name)
 
     @cached_property
+    def metadata(self) -> pd.DataFrame:
+        return (
+            pd.concat(
+                [cm.metadata for cm in self.contrast_metagenomes.values()],
+                join="outer",
+            )
+            .pipe(lambda df: df[~df.index.duplicated(keep="first")])
+        )
+
+    @cached_property
     def association(self) -> pd.DataFrame:
         # Combine the association results from all contrasts
         # and recompute the FDR-adjusted q-values
