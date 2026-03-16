@@ -530,14 +530,9 @@ class Pangenome(Dataset):
         Map of genes in a bin.
         """
 
-        # Get the coordinates for every gene across every genome
-        # Filter to just the genes in this bin
-        aln = self.align_genomes.query(f"bin == '{bin}'")
-
-        # Figure out the coordinates by looking at all of the contig alignments
-        coords = Coords(aln)
-
-        coords = coords.to_df()
+        # Get a DataFrame with the gene coordinates
+        # inferred from all of the genome alignments
+        coords, group_offset = self._get_gene_coords(bin)
 
         # Customize the names
         coords = coords.assign(
@@ -563,7 +558,7 @@ class Pangenome(Dataset):
                 "",
                 xytext=(r['start_x'], 0),
                 xy=(r['stop_x'], 0),
-                arrowprops=dict(arrowstyle="->")
+                arrowprops=dict(arrowstyle="simple")
             )
             ax.plot([r['start_x'], r['stop_x']], [0, 0], linewidth=0)
 
@@ -584,11 +579,25 @@ class Pangenome(Dataset):
                 verticalalignment='bottom'
             )
 
+        # The vertial lines work with an increment scaled to the text offset
+        vertical_increment = text_offset / 10.
+
+        # Draw a line to indicate each of the group offsets
+        # It should be styled as a small vertical red line
+        for offset_x in (group_offset / span_x).values:
+            if offset_x > 0:
+                ax.annotate(
+                    '',
+                    xytext=(offset_x, 0),
+                    xy=(offset_x, -4 * vertical_increment),
+                    arrowprops=dict(arrowstyle="-", color="red")
+                )
+
         # Draw a line underneath the entire gene map
         ax.annotate(
             '',
-            xytext=(0, - text_offset / 5.),
-            xy=(1, - text_offset / 5.),
+            xytext=(0, -2 * vertical_increment),
+            xy=(1, -2 * vertical_increment),
             arrowprops=dict(arrowstyle="|-|")
         )
 
@@ -618,6 +627,39 @@ class Pangenome(Dataset):
             coords.to_csv(file_prefix + ".csv", index=False)
 
         return fig
+
+    def _get_gene_coords(self, bin: str) -> pd.DataFrame:
+        """
+        Get the coordinates for every gene across every genome
+        Filter to just the genes in this bin
+        """
+        aln = self.align_genomes.query(f"bin == '{bin}'")
+        output = []
+        while len(aln) > 0:
+            output.append(Coords(aln).to_df())
+            if len(output[-1]) == 0:
+                break
+            aln = aln.loc[~aln['sseqid'].isin(output[-1]['gene'])]
+
+        df = pd.concat([df.assign(group=i) for i, df in enumerate(output)])
+
+        # Assign a set of global coordinates to each gene
+        # This will take into account the size of each group, which is the
+        # maximum start or stop value within each group.
+        group_sizes = (
+            df.assign(end=df[['start', 'stop']].max(axis=1))
+            .groupby("group")
+            ['end'].max()
+        )
+        # To use those to build the global coordinates, take the cumulative sum
+        group_offset = group_sizes.cumsum() - group_sizes
+        
+        df = df.assign(
+            start=df["start"] + df["group"].apply(group_offset.get),
+            stop=df["stop"] + df["group"].apply(group_offset.get)
+        ).reset_index(drop=True)
+
+        return df, group_offset
 
     @staticmethod
     def customize_label(label: str, remove_gene_id: bool, remove_org_tag: bool):
