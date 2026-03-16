@@ -11,7 +11,8 @@ from .models import (
     ContrastMetagenomesSet,
     ContrastMetagenomes,
     Pangenome,
-    PangenomePhylogeny,
+    Phylogeny,
+    PhylogenySet,
     PangenomeSet,
 )
 
@@ -19,6 +20,7 @@ __all__ = [
     "ContrastMetagenomesSet",
     "ContrastMetagenomes",
     "Pangenome",
-    "PangenomePhylogeny",
+    "Phylogeny",
+    "PhylogenySet",
     "PangenomeSet",
 ]
