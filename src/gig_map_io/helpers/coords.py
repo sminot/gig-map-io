@@ -56,6 +56,16 @@ class Coords:
             dir=lambda d: d.apply(lambda r: "fwd" if r['stop'] > r['start'] else "rev", axis=1)
         ).sort_values(by="start").query("len > 0")
 
+        # If all of the genes are in the reverse direction, flip the coordinates by multiplying by -1
+        if df["dir"].value_counts().get("rev", 0) == df.shape[0]:
+            df = df.assign(
+                start=df["start"] * -1,
+                stop=df["stop"] * -1
+            )
+            df = df.assign(
+                dir=lambda d: d.apply(lambda r: "fwd" if r['stop'] > r['start'] else "rev", axis=1)
+            ).sort_values(by="start")
+
         # Make it start at 0
         min_val = np.min([df["start"].min(), df["stop"].min()])
 
