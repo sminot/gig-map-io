@@ -1,9 +1,9 @@
 from Bio.Phylo.BaseTree import Tree, Clade
 import pandas as pd
 import numpy as np
-import statsmodels.stats.api as stats
+from scipy import stats
 import plotly.graph_objects as go
-import plotly.subplots as make_subplots
+from plotly.subplots import make_subplots
 from typing import Dict, List
 
 
@@ -360,7 +360,6 @@ class Phylogeny:
                 autorange="reversed"
             ),
             margin=dict(l=100, r=400, b=100, t=100),
-            title_text=f"{self.name} vs. {comp.name} (Pairwise Distances - Spearman rho: {concordance:.1f})",
             height=height,
             width=width
         )

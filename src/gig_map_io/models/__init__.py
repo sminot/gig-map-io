@@ -9,15 +9,15 @@ multiple ContrastMetagenomes keyed by pangenome name (no single directory).
 from .contrast_metagenomes_set import ContrastMetagenomesSet
 from .contrast_metagenomes import ContrastMetagenomes
 from .pangenome import Pangenome
-from .phylogeny import Phylogeny
-from .phylogeny_set import PhylogenySet
+from .phylogeny import PangenomePhylogeny
+from .phylogeny_set import PangenomePhylogenySet
 from .pangenome_set import PangenomeSet
 
 __all__ = [
     "ContrastMetagenomesSet",
     "ContrastMetagenomes",
     "Pangenome",
-    "Phylogeny",
-    "PhylogenySet",
+    "PangenomePhylogeny",
+    "PangenomePhylogenySet",
     "PangenomeSet",
 ]

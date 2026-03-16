@@ -18,8 +18,8 @@ from .core import (
     ContrastMetagenomes,
     Pangenome,
     PangenomeSet,
-    Phylogeny,
-    PhylogenySet,
+    PangenomePhylogeny,
+    PangenomePhylogenySet,
 )
 from .parameters import Parameters
 
@@ -28,8 +28,8 @@ __all__ = [
     "ContrastMetagenomes",
     "Pangenome",
     "PangenomeSet",
-    "Phylogeny",
-    "PhylogenySet",
+    "PangenomePhylogeny",
+    "PangenomePhylogenySet",
     "Parameters"
 ]
 
