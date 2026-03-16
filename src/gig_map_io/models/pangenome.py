@@ -79,6 +79,12 @@ class Pangenome(Dataset):
             )
         )
 
+    def bin_contains_term(self, bin: str, term: str) -> bool:
+        """
+        Check if a bin contains a term, even as a substring.
+        """
+        return self.gene_bins.query(f"bin == '{bin}'")["combined_name"].str.contains(term).any()
+
     @cached_property
     def ani_distances(self) -> pd.DataFrame:
         """

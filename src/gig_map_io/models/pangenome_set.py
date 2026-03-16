@@ -41,6 +41,9 @@ class PangenomeSet(DatasetDict):
     def __format__(self, format_spec: str) -> str:
         return f"PangenomeSet(directory_dict={self.directory_dict})"
 
+    def __getitem__(self, key: str) -> Pangenome:
+        return self.pangenomes[key]
+
     @cached_property
     def gene_bins(self) -> pd.DataFrame:
         return pd.concat([
@@ -176,6 +179,79 @@ class PangenomeSet(DatasetDict):
         df["qvalue"] = qvalues
 
         return df.sort_values("pvalue").reset_index(drop=True)
+
+    def plot_enriched_annotation_terms(
+        self,
+        features: pd.MultiIndex | pd.DataFrame,
+        qvalue_threshold: float = 0.2,
+        min_count: int = 2,
+        alternative: str = "greater",
+        width: int = 800,
+        height: int = 500,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        Horizontal bar plot of enriched annotation terms.
+
+        Parameters
+        ----------
+        features : pd.MultiIndex or pd.DataFrame
+            Either a MultiIndex (levels: pangenome, feature) passed directly to
+            find_enriched_annotation_terms, or the DataFrame output of that method.
+        qvalue_threshold : float
+            Only show terms with qvalue < this threshold.
+        min_count : int
+            Passed to find_enriched_annotation_terms when features is a MultiIndex.
+        alternative : str
+            Passed to find_enriched_annotation_terms when features is a MultiIndex.
+        """
+        if isinstance(features, pd.MultiIndex):
+            enrichment_df = self.find_enriched_annotation_terms(
+                features, min_count=min_count, alternative=alternative
+            )
+        else:
+            enrichment_df = features
+
+        df = enrichment_df[enrichment_df["qvalue"] < qvalue_threshold].sort_values("odds_ratio")
+
+        hover = {"qvalue": ":.2e", "odds_ratio": ":.2f", "n_foreground": True, "n_background": True}
+        common = dict(orientation="h", template="plotly_white")
+
+        fig = make_subplots(rows=1, cols=3, shared_yaxes=True, horizontal_spacing=0.05)
+
+        for trace in px.bar(
+            data_frame=df, x="n_foreground", y="term", hover_data=hover,
+            labels=dict(n_foreground="Foreground Bins", term="Annotation Term"),
+            **common,
+        ).data:
+            fig.add_trace(trace, row=1, col=1)
+
+        for trace in px.bar(
+            data_frame=df, x="odds_ratio", y="term", hover_data=hover,
+            labels=dict(odds_ratio="Odds Ratio", term="Annotation Term"),
+            **common,
+        ).data:
+            fig.add_trace(trace, row=1, col=2)
+
+        for trace in px.bar(
+            data_frame=df, x="qvalue", y="term", hover_data=hover,
+            labels=dict(qvalue="Q-value", term="Annotation Term"),
+            **common,
+        ).data:
+            fig.add_trace(trace, row=1, col=3)
+
+        fig.update_layout(
+            width=width,
+            height=height,
+            showlegend=False,
+            xaxis=dict(title="Bins"),
+            xaxis2=dict(title="Odds Ratio"),
+            xaxis3=dict(title="Q-value"),
+            yaxis=dict(automargin=True),
+            template="plotly_white",
+        )
+        save_image(fig, file_prefix)
+        return fig
 
     def bin_genome_heatmap(self,
         col_wrap: int = 3,

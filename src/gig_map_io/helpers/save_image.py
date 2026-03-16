@@ -60,6 +60,10 @@ def _save_image_matplotlib_figure(
     """
     if file_prefix is None:
         return
+
+    # Make sure that the folder exists
+    Path(file_prefix).parent.mkdir(parents=True, exist_ok=True)
+
     if as_pdf:
         fig.savefig(file_prefix + ".pdf")
     if as_png:

@@ -77,8 +77,7 @@ class ContrastMetagenomes(Dataset):
         DataFrame with specimens as index and bins as columns.
         """
         path = self.directory / "bin_abundance" / "rpkm.csv.gz"
-        df = pd.read_csv(path)
-        df.set_index("specimen", inplace=True)
+        df = pd.read_csv(path, index_col=0)
         return df
 
     @cached_property
@@ -89,6 +88,13 @@ class ContrastMetagenomes(Dataset):
         path = self.directory / "association" / "metadata.csv"
         df = pd.read_csv(path, index_col=0)
         return df
+
+    @cached_property
+    def metadata_rpkm(self) -> pd.DataFrame:
+        """
+        Metadata and RPKM from metadata.csv and rpkm.csv.gz.
+        """
+        return self.metadata.merge(self.rpkm, left_index=True, right_index=True)
 
     @cached_property
     def mean_abund(self) -> pd.Series:
