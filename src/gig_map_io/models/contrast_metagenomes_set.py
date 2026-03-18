@@ -95,6 +95,19 @@ class ContrastMetagenomesSet(DatasetDict):
         return df
 
     @cached_property
+    def rpkm(self) -> pd.DataFrame:
+        """
+        RPKM from all contrasts.
+        The pangenome name is added as the first level of the column index.
+        """
+        return (
+            pd.concat([
+                contrast.rpkm.T.assign(pangenome=pangenome_name).reset_index().set_index(['pangenome', 'index']).T
+                for pangenome_name, contrast in self.contrast_metagenomes.items()
+            ], axis=1).fillna(0)
+        )
+
+    @cached_property
     def association(self) -> pd.DataFrame:
         # Combine the association results from all contrasts
         # and recompute the FDR-adjusted q-values
