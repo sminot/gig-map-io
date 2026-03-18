@@ -68,13 +68,31 @@ class ContrastMetagenomesSet(DatasetDict):
 
     @cached_property
     def metadata(self) -> pd.DataFrame:
-        return (
-            pd.concat(
-                [cm.metadata for cm in self.contrast_metagenomes.values()],
-                join="outer",
-            )
-            .pipe(lambda df: df[~df.index.duplicated(keep="first")])
+        # To merge the metadata from all contrasts, melt the wide form
+        # of the metadata into a long form, and then merge the long form
+        # with the metadata from all contrasts.
+        # Check for any values that differ between contrasts, and log a warning.
+        # If any values differ, log a warning.
+        long = (
+            pd.concat([
+                contrast.metadata.reset_index().melt(id_vars=["index"], var_name="variable", value_name="value")
+                for contrast in self.contrast_metagenomes.values()
+            ])
+            .dropna(subset=["value"])
+            .drop_duplicates()
+            .sort_values(by=["index", "variable"])
         )
+        for ix, val in long.groupby(["index", "variable"])["value"]:
+            if len(val) > 1:
+                logger.warning(f"Value {val} differs between contrasts for {ix}")
+        # Make a wide table
+        df = (
+            long
+            .groupby(["index", "variable"])
+            .head(1)
+            .pivot(index="index", columns="variable", values="value")
+        )
+        return df
 
     @cached_property
     def association(self) -> pd.DataFrame:
