@@ -135,6 +135,13 @@ class Pangenome(Dataset):
         return int(self.gene_bins.dropna(subset=["bin"]).shape[0])
 
     @cached_property
+    def n_genomes(self) -> int:
+        """
+        Number of genomes in the pangenome.
+        """
+        return int(self.align_genomes["genome"].dropna().nunique())
+
+    @cached_property
     def align_genomes_long(self) -> pd.DataFrame:
         """
         Content of align/genomes.aln.csv.gz (long format).
