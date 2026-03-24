@@ -176,8 +176,10 @@ class ContrastMetagenomesSet(DatasetDict):
                 feature="Pangenome Bin",
                 mean_abund="Mean Abundance (RPKM)",
                 pangenome="Pangenome",
+                qvalue="q-value",
+                pvalue="p-value",
             ),
-            hover_data=["mean_abund", "Estimate", "signed_log10_qvalue", "signed_log10_pvalue", "pvalue"],
+            hover_data=["mean_abund", "Estimate", "signed_log10_qvalue", "signed_log10_pvalue", "pvalue", "qvalue"],
             width=width,
             height=height,
             **kwargs

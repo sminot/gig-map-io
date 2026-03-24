@@ -137,6 +137,8 @@ class ContrastMetagenomes(Dataset):
                 neg_log10_qvalue="-log10(q-value)",
                 feature="Pangenome Bin",
                 mean_abund="Mean Abundance (RPKM)",
+                qvalue="q-value",
+                pvalue="p-value",
             ),
             size="mean_abund",
             width=width,
