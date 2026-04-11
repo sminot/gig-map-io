@@ -573,7 +573,7 @@ class ContrastMetagenomesSet(DatasetDict):
         The threshold can be set as the "median", "mean", or with a specific RPKM value.
         """
         contrast: ContrastMetagenomes = self[pangenome_name]
-        return contrast.calc_auc(
+        return contrast.calc_odds_ratio(
             metadata_col=metadata_col,
             ref_group=ref_group,
             comp_group=comp_group,
