@@ -67,6 +67,13 @@ class ContrastMetagenomesSet(DatasetDict):
         return getattr(self.contrast_metagenomes, name)
 
     @cached_property
+    def n_samples(self) -> int:
+        """
+        Number of samples in the contrast set.
+        """
+        return self.metadata.shape[0]
+
+    @cached_property
     def metadata(self) -> pd.DataFrame:
         # To merge the metadata from all contrasts, melt the wide form
         # of the metadata into a long form, and then merge the long form
@@ -524,6 +531,55 @@ class ContrastMetagenomesSet(DatasetDict):
                 mean_abund=lambda x: x[["mean_abund_self", "mean_abund_comparitor"]].mean(axis=1),
             )
             .dropna(subset=["pvalue_self", "pvalue_comparitor"])
+        )
+
+    def calc_auc(
+        self,
+        pangenome_name: str,
+        metadata_col: str,
+        ref_group,
+        comp_group,
+        bin_id: str,
+        query_str=None
+    ):
+        """
+        For an organism, calculate the AUC for one bin with respect to a particular metadata column.
+        The user specifies a reference group and comparison group, both of which must be
+        values present in the metadata column.
+        """
+        contrast: ContrastMetagenomes = self[pangenome_name]
+        return contrast.calc_auc(
+            metadata_col=metadata_col,
+            ref_group=ref_group,
+            comp_group=comp_group,
+            bin_id=bin_id,
+            query_str=query_str
+        )
+
+    def calc_odds_ratio(
+        self,
+        pangenome_name: str,
+        metadata_col: str,
+        ref_group,
+        comp_group,
+        bin_id: str,
+        query_str=None,
+        threshold="median"
+    ):
+        """
+        For an organism, calculate the odds ratio for one bin with respect to a particular metadata column.
+        The user specifies a reference group and comparison group, both of which must be
+        values present in the metadata column.
+        The threshold can be set as the "median", "mean", or with a specific RPKM value.
+        """
+        contrast: ContrastMetagenomes = self[pangenome_name]
+        return contrast.calc_auc(
+            metadata_col=metadata_col,
+            ref_group=ref_group,
+            comp_group=comp_group,
+            bin_id=bin_id,
+            query_str=query_str,
+            threshold=threshold
         )
 
     def compare_sig_categories(

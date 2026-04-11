@@ -90,11 +90,119 @@ class ContrastMetagenomes(Dataset):
         return df
 
     @cached_property
+    def n_samples(self) -> int:
+        """
+        Number of samples in the contrast.
+        """
+        return self.rpkm.shape[0]
+
+    @cached_property
     def metadata_rpkm(self) -> pd.DataFrame:
         """
         Metadata and RPKM from metadata.csv and rpkm.csv.gz.
         """
         return self.metadata.merge(self.rpkm, left_index=True, right_index=True)
+
+    def calc_auc(
+        self,
+        metadata_col: str,
+        ref_group,
+        comp_group,
+        bin_id: str,
+        query_str=None
+    ):
+        """
+        For an organism, calculate the AUC for one bin with respect to a particular metadata column.
+        The user specifies a reference group and comparison group, both of which must be
+        values present in the metadata column.
+        """
+        # Lazy load
+        from sklearn import metrics
+
+        # Make a DataFrame with the bin RPKM and metadata values, with ref_group and comp_group -> 0/1
+        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str)
+
+        return metrics.roc_auc_score(df['x'], df['rpkm'])
+
+    def calc_odds_ratio(
+        self,
+        metadata_col: str,
+        ref_group,
+        comp_group,
+        bin_id: str,
+        query_str=None,
+        threshold="median"
+    ):
+        """
+        For an organism, calculate the odds ratio for one bin with respect to a particular metadata column.
+        The user specifies a reference group and comparison group, both of which must be
+        values present in the metadata column.
+        The threshold can be set as the "median", "mean", or with a specific RPKM value.
+        """
+        # Lazy load
+        from scipy import stats
+
+        # Make a DataFrame with the bin RPKM and metadata values, with ref_group and comp_group -> 0/1
+        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str)
+
+        # Mark each sample as 0/1 based on the bin abundance
+        if threshold == "median":
+            threshold = df["rpkm"].median()
+        elif threshold == "mean":
+            threshold = df["rpkm"].mean()
+        else:
+            assert isinstance(threshold, float)
+
+        df = df.assign(present=(df["rpkm"] > threshold).astype(int))
+
+        # Make the contingency table
+        tab = df.assign(count=1).pivot_table(index="present", columns="groups", values="count", aggfunc="sum")
+
+        # Make sure that we have a 2x2 matrix
+        assert tab.shape[0] == 2
+        assert tab.shape[1] == 2
+
+        # The ordering of rows is inverted w/r/t odds_ratio
+        tab = tab.reindex(index=[0, 1], columns=[1, 0])
+
+        # Run Fischer's exact test
+        odds_ratio = stats.contingency.odds_ratio(tab.values)
+        return odds_ratio.statistic
+
+    def _make_bin_metadata_df(
+        self,
+        metadata_col: str,
+        ref_group,
+        comp_group,
+        bin_id: str,
+        query_str=None,
+    ) -> pd.DataFrame:
+
+        assert metadata_col in self.metadata
+        assert bin_id in self.rpkm
+
+        metadata = self.metadata.copy()
+        if query_str is not None:
+            metadata = metadata.query(query_str)
+
+        df = pd.DataFrame(dict(
+            groups=metadata[metadata_col],
+            rpkm=self.rpkm[bin_id]
+        )).dropna()
+
+        assert ref_group in df["groups"].values
+        assert comp_group in df["groups"].values
+
+        df = df.loc[df['groups'].isin([ref_group, comp_group])]
+
+        # Make sure that we have enough data
+        assert df.shape[0] > 2
+
+        # Set ref_group=0 and comp_group=1
+        df = df.assign(x=df["groups"].apply({ref_group: 0, comp_group: 1}.get))
+
+        return df
+
 
     @cached_property
     def mean_abund(self) -> pd.Series:
