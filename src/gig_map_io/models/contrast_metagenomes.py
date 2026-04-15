@@ -151,23 +151,40 @@ class ContrastMetagenomes(Dataset):
         elif threshold == "mean":
             threshold = df["rpkm"].mean()
         else:
-            assert isinstance(threshold, float)
+            assert isinstance(threshold, (float, int))
 
         df = df.assign(present=(df["rpkm"] > threshold).astype(int))
 
         # Make the contingency table
-        tab = df.assign(count=1).pivot_table(index="present", columns="groups", values="count", aggfunc="sum")
+        tab = (
+            df
+            .assign(count=1)
+            .pivot_table(index="present", columns="groups", values="count", aggfunc="sum")
+            .fillna(0)
+            .astype(int)
+        )
 
-        # Make sure that we have a 2x2 matrix
-        assert tab.shape[0] == 2
-        assert tab.shape[1] == 2
+        # Make sure that we have a 2x2 matrix, otherwise return 0
+        if tab.shape[0] == 1:
+            return 1
+        if tab.shape[1] == 1:
+            return 1
 
         # The ordering of rows is inverted w/r/t odds_ratio
         tab = tab.reindex(index=[0, 1], columns=[1, 0])
 
+        # To prevent an infinite error, add 1 to all values
+        tab = tab + 1
+
         # Run Fischer's exact test
-        odds_ratio = stats.contingency.odds_ratio(tab.values)
-        return odds_ratio.statistic
+        try:
+            odds_ratio = stats.contingency.odds_ratio(tab.values)
+        except Exception as e:
+            print(tab)
+            raise e
+        odds_ratio = odds_ratio.statistic
+        assert np.isfinite(odds_ratio), tab
+        return odds_ratio
 
     def _make_bin_metadata_df(
         self,
