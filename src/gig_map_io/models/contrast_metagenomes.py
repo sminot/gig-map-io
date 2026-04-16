@@ -159,7 +159,7 @@ class ContrastMetagenomes(Dataset):
         tab = (
             df
             .assign(count=1)
-            .pivot_table(index="present", columns="groups", values="count", aggfunc="sum")
+            .pivot_table(index="present", columns="x", values="count", aggfunc="sum")
             .fillna(0)
             .astype(int)
         )
@@ -171,7 +171,7 @@ class ContrastMetagenomes(Dataset):
             return 1
 
         # The ordering of rows is inverted w/r/t odds_ratio
-        tab = tab.reindex(index=[0, 1], columns=[1, 0])
+        tab = tab.reindex(index=[0, 1], columns=[0, 1])
 
         # To prevent an infinite error, add 1 to all values
         tab = tab + 1
