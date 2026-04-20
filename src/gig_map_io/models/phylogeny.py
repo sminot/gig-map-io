@@ -25,12 +25,13 @@ class PangenomePhylogeny(Dataset):
     def _newick_file(self, bin_id: str) -> Path:
         return self.directory / "raxml" / f"{bin_id}.msa.raxml.bestTree"
 
-    def newick(self, bin_id: str) -> str:
+    def newick(self, bin_id: str, root_at_midpoint: bool = True) -> str:
         """
         Make the tree, root at midpoint, and then return the Newick string.
         """
         tree = Phylo.read(self._newick_file(bin_id), "newick")
-        tree.root_at_midpoint()
+        if root_at_midpoint:
+            tree.root_at_midpoint()
         return tree.format("newick")
 
     def tree(self, bin_id: str) -> Phylogeny:
