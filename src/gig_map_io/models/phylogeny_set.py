@@ -32,3 +32,6 @@ class PangenomePhylogenySet(DatasetDict):
 
     def tree(self, pangenome_name: str, bin_id: str) -> Phylogeny:
         return self.phylogenies[pangenome_name].tree(bin_id)
+
+    def newick(self, pangenome_name: str, bin_id: str) -> str:
+        return self.phylogenies[pangenome_name].newick(bin_id)
