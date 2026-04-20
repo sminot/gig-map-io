@@ -137,7 +137,9 @@ class ContrastMetagenomes(Dataset):
         For an organism, calculate the odds ratio for one bin with respect to a particular metadata column.
         The user specifies a reference group and comparison group, both of which must be
         values present in the metadata column.
-        The threshold can be set as the "median", "mean", or with a specific RPKM value.
+        The threshold can be set as the "median", "mean", a specific RPKM value, or None.
+        When None, all unique RPKM values are tested as thresholds and the one yielding the
+        largest absolute odds ratio (furthest from 1 on a log scale) is returned.
         """
         # Lazy load
         from scipy import stats
@@ -145,46 +147,75 @@ class ContrastMetagenomes(Dataset):
         # Make a DataFrame with the bin RPKM and metadata values, with ref_group and comp_group -> 0/1
         df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str)
 
-        # Mark each sample as 0/1 based on the bin abundance
-        if threshold == "median":
-            threshold = df["rpkm"].median()
-        elif threshold == "mean":
-            threshold = df["rpkm"].mean()
+        def _or_at_threshold(t):
+            d = df.assign(present=(df["rpkm"] >= t).astype(int))
+            tab = (
+                d
+                .assign(count=1)
+                .pivot_table(index="present", columns="x", values="count", aggfunc="sum")
+                .fillna(0)
+                .astype(int)
+            )
+            tab = tab.reindex(index=[0, 1], columns=[0, 1]).fillna(0).astype(int) + 1
+            try:
+                or_val = stats.contingency.odds_ratio(tab.values)
+            except Exception as e:
+                print(tab)
+                raise e
+            or_val = or_val.statistic
+            assert np.isfinite(or_val), tab
+            return or_val
+
+        if threshold is None:
+            thresholds = sorted(df["rpkm"].unique())
+            return max((_or_at_threshold(t) for t in thresholds), key=lambda v: abs(np.log(v)))
         else:
-            assert isinstance(threshold, (float, int))
+            if threshold == "median":
+                threshold = df["rpkm"].median()
+            elif threshold == "mean":
+                threshold = df["rpkm"].mean()
+            else:
+                assert isinstance(threshold, (float, int))
 
-        df = df.assign(present=(df["rpkm"] > threshold).astype(int))
+            return _or_at_threshold(threshold)
 
-        # Make the contingency table
-        tab = (
-            df
-            .assign(count=1)
-            .pivot_table(index="present", columns="x", values="count", aggfunc="sum")
-            .fillna(0)
-            .astype(int)
+    def calc_logistic_regression(
+        self,
+        metadata_col: str,
+        ref_group,
+        comp_group,
+        bin_id: str,
+        query_str=None,
+    ) -> dict:
+        """
+        For an organism, perform logistic regression for one bin with respect to a particular
+        metadata column. The user specifies a reference group and comparison group, both of
+        which must be values present in the metadata column.
+
+        RPKM abundance is used as the predictor and group membership (ref=0, comp=1) as the
+        outcome. Returns a dict with keys: coef, odds_ratio, pvalue, conf_int_lower,
+        conf_int_upper.
+        """
+        import statsmodels.api as sm
+
+        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str)
+
+        X = sm.add_constant(df["rpkm"])
+        y = df["x"]
+
+        result = sm.Logit(y, X).fit(disp=0)
+
+        coef = result.params["rpkm"]
+        pvalue = result.pvalues["rpkm"]
+        conf_int = result.conf_int().loc["rpkm"]
+
+        return dict(
+            coef=coef,
+            odds_ratio=np.exp(coef),
+            pvalue=pvalue,
+            conf_int_lower=conf_int[0],
+            conf_int_upper=conf_int[1],
         )
-
-        # Make sure that we have a 2x2 matrix, otherwise return 0
-        if tab.shape[0] == 1:
-            return 1
-        if tab.shape[1] == 1:
-            return 1
-
-        # The ordering of rows is inverted w/r/t odds_ratio
-        tab = tab.reindex(index=[0, 1], columns=[0, 1])
-
-        # To prevent an infinite error, add 1 to all values
-        tab = tab + 1
-
-        # Run Fischer's exact test
-        try:
-            odds_ratio = stats.contingency.odds_ratio(tab.values)
-        except Exception as e:
-            print(tab)
-            raise e
-        odds_ratio = odds_ratio.statistic
-        assert np.isfinite(odds_ratio), tab
-        return odds_ratio
 
     def _make_bin_metadata_df(
         self,
