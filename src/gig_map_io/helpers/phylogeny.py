@@ -415,3 +415,9 @@ class Phylogeny:
         ]
 
         return set(nodes)
+
+    def newick(self) -> str:
+        """
+        Return the Newick string for the tree.
+        """
+        return self.tree.format("newick")
