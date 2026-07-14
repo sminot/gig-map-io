@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gig-map-io"
+version = "0.1.0"
+description = "Library to read gig-map workflow outputs: reader objects per workflow and plotting functions (volcano, bin abundance, bin phylogeny)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+  { name = "gig-map-io developers" }
+]
+keywords = ["pangenome", "metagenomics", "gig-map", "bioinformatics"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# Required for reading workflow outputs (models), plotting, and Parameters
+dependencies = [
+  "pandas>=2.0", # models (association, RPKM, etc.), plots, io
+  "numpy>=1.24", # volcano and compare-contrasts plots
+  "plotly>=5.0", # all plot functions (express, graph_objects, subplots)
+  "statsmodels>=0.14", # FDR correction in volcano and compare-contrasts
+  "marimo>=0.8.0", # parameters.py (Parameters class for marimo notebooks)
+  "matplotlib>=3.9.4",
+  "biopython>=1.85",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff",
+  "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/FredHutch/gig-map-io"
+Repository = "https://github.com/FredHutch/gig-map-io"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
