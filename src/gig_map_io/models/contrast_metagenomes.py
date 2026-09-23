@@ -81,6 +81,15 @@ class ContrastMetagenomes(Dataset):
         return df
 
     @cached_property
+    def abund(self) -> pd.DataFrame:
+        """
+        Per-bin abundance from association/abund.csv, as it was handed to the
+        association model. Unlike `rpkm` this is not scaled by pangenome size.
+        """
+        path = self.directory / "association" / "abund.csv"
+        return pd.read_csv(path, index_col=0)
+
+    @cached_property
     def metadata(self) -> pd.DataFrame:
         """
         Metadata from metadata.csv.

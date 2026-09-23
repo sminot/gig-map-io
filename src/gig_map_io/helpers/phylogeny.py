@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Dict, List
 
+from .save_image import save_image
+
 
 class Phylogeny:
     """
@@ -244,7 +246,15 @@ class Phylogeny:
     def leaves_list(self) -> List[str]:
         return [node.name for node in self.tree.get_terminals()]
 
-    def compare(self, comp: 'Phylogeny', height: int, width: int, scale_by: str, align_tree_a: bool):
+    def compare(
+        self,
+        comp: 'Phylogeny',
+        height: int,
+        width: int,
+        scale_by: str,
+        align_tree_a: bool,
+        file_prefix: str | None = None
+    ):
         print(f"Calculating concordance: {self.name} vs. {comp.name}")
         concordance = self._calc_concordance(comp)
 
@@ -364,6 +374,8 @@ class Phylogeny:
             width=width
         )
 
+        save_image(fig, file_prefix)
+
         return fig
 
 
@@ -421,3 +433,19 @@ class Phylogeny:
         Return the Newick string for the tree.
         """
         return self.tree.format("newick")
+    def dedup_refseq(self) -> None:
+        """
+        Drop the GenBank copy of any assembly that is also present as RefSeq.
+
+        NCBI publishes the same assembly under both a GCA_ (GenBank) and a
+        GCF_ (RefSeq) accession; a pangenome built from both ends up with two
+        identical leaves, which clutters a tanglegram.
+        """
+        leaves = {leaf.name: leaf for leaf in self.tree.get_terminals()}
+        for name in leaves:
+            if not name.startswith("GCF_"):
+                continue
+            genbank_id = "GCA_" + name[4:].split("_")[0]
+            for other_name, other_leaf in leaves.items():
+                if other_name.startswith(genbank_id):
+                    self.tree.prune(other_leaf)

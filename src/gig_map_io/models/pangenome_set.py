@@ -72,8 +72,7 @@ class PangenomeSet(DatasetDict):
         Parameters
         ----------
         features : pd.MultiIndex
-            MultiIndex with level names 'pangenome' and 'feature', where 'feature'
-            corresponds to the 'bin' column in gene_bins.
+            (pangenome, bin) pairs making up the foreground set.
         min_count : int
             Minimum number of foreground bins a term must appear in to be tested.
         alternative : str
@@ -115,10 +114,7 @@ class PangenomeSet(DatasetDict):
                 raise ValueError(f"Feature {feature} not found in pangenome {pangenome}")
 
         # Split into foreground and background
-        fg_index = set(zip(
-            features.get_level_values("pangenome"),
-            features.get_level_values("feature")
-        ))
+        fg_index = set(features)
         fg_bins = {k: v for k, v in bin_terms.items() if k in fg_index}
         bg_bins = {k: v for k, v in bin_terms.items() if k not in fg_index}
 
@@ -204,7 +200,7 @@ class PangenomeSet(DatasetDict):
         Parameters
         ----------
         features : pd.MultiIndex or pd.DataFrame
-            Either a MultiIndex (levels: pangenome, feature) passed directly to
+            Either a MultiIndex of (pangenome, bin) pairs passed directly to
             find_enriched_annotation_terms, or the DataFrame output of that method.
         qvalue_threshold : float
             Only show terms with qvalue < this threshold.

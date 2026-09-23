@@ -256,7 +256,8 @@ class Pangenome(Dataset):
         min_n_genomes: int = 10,
         max_n_genomes: int = 100,
         n_genes: int = 100,
-        max_distance: int = 1000000
+        max_distance: int = 1000000,
+        random_state: int = 42
     ) -> pd.DataFrame:
         """
         For a random subset of genes, compute how similar they are in terms
@@ -277,6 +278,8 @@ class Pangenome(Dataset):
             Number of genes to select from each bin (up to the size of the bin).
         max_distance: int
             Maximum distance to consider for the genomic coordinates (in bp).
+        random_state: int
+            Seed for the gene subsampling.
 
         Returns
         -------
@@ -293,7 +296,9 @@ class Pangenome(Dataset):
         genes_passing_filter = n_genomes_per_gene.loc[lambda x: (x >= min_n_genomes) & (x <= max_n_genomes)].index.tolist()
 
         # Pick a random subset of the genes
-        genes = np.random.choice(genes_passing_filter, size=n_genes, replace=False)
+        genes = np.random.default_rng(random_state).choice(
+            genes_passing_filter, size=n_genes, replace=False
+        )
 
         # Subset the align_genomes_long DataFrame to just the selected genes
         df = (
@@ -344,6 +349,7 @@ class Pangenome(Dataset):
         max_n_genomes: int = 100,
         width: int = 500,
         height: int = 400,
+        random_state: int = 42,
         file_prefix: str | None = None,
         **kwargs: dict[str, Any]
     ) -> go.Figure:
@@ -355,7 +361,9 @@ class Pangenome(Dataset):
         """
 
         df = (
-            self.calc_membership_vs_distance(min_n_genomes, max_n_genomes, n_genes)
+            self.calc_membership_vs_distance(
+                min_n_genomes, max_n_genomes, n_genes, random_state=random_state
+            )
             .assign(
                 distance_log10=lambda d: np.log10(d["distance"]),
                 membership_bins=lambda d: d["membership"].apply(lambda x: round(x, 1))
@@ -448,13 +456,15 @@ class Pangenome(Dataset):
 
         return fig
 
-    def rarefaction_curve_data(_self, n_reps: int = 10) -> pd.DataFrame:
+    def rarefaction_curve_data(_self, n_reps: int = 10, random_state: int = 42) -> pd.DataFrame:
         data = []
         for rep in range(n_reps):
             # Take the bin presence matrix
             bin_presence = _self.bin_presence_wide.copy()
-            # Shuffle the rows
-            bin_presence = bin_presence.sample(frac=1).reset_index(drop=True)
+            # Shuffle the rows, in an order that is reproducible across runs
+            bin_presence = bin_presence.sample(
+                frac=1, random_state=random_state + rep
+            ).reset_index(drop=True)
             # Compute the cumulative sum by column (bin)
             cs = bin_presence.cumsum()
             # For each row, count the number of genes recovered
@@ -476,6 +486,7 @@ class Pangenome(Dataset):
         n_reps: int = 10,
         width: int = 500,
         height: int = 400,
+        random_state: int = 42,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
@@ -485,13 +496,15 @@ class Pangenome(Dataset):
         ----------
         n_reps: int
             Number of rarefaction replicates to simulate.
+        random_state: int
+            Seed for the order genomes are accumulated in.
 
         Returns
         -------
         Plotly figure of the rarefaction curve.
         """
         # Simulate the number of genes recovered with different numbers of subsampled genomes
-        rf = self.rarefaction_curve_data(n_reps)
+        rf = self.rarefaction_curve_data(n_reps, random_state=random_state)
 
         fig = go.Figure(
             data=[
