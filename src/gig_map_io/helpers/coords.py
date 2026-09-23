@@ -30,10 +30,15 @@ class Coords:
         # Get the median gene length from the input
         self._input_aln_len = aln.groupby("sseqid")["length"].median()
 
-        # Get the list of contigs, sorted by the number of genes
+        # Work through the contigs from the most genes to the fewest, since each
+        # one's offset is measured against the genes already placed. Ties are
+        # broken by name: value_counts does not define an order among equal
+        # counts, and letting it pick made the coordinates depend on the pandas
+        # version rather than on the data.
         contig_sizes = aln["contig"].value_counts()
+        contigs = sorted(contig_sizes.index, key=lambda name: (-contig_sizes[name], name))
 
-        for contig in contig_sizes.index.values:
+        for contig in contigs:
             contig_aln = aln.query(f"contig == '{contig}'").set_index("sseqid")
             self.add_contig(
                 contig_aln["qstart"].to_dict(),
