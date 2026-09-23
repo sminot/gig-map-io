@@ -9,13 +9,13 @@ simple, JSON-serializable keyword arguments.
 
 When used in marimo notebooks, helper methods (e.g. ``ui_text``, ``ui_dropdown``)
 return marimo UI elements whose default value is the stored parameter for a
-given key.
+given key. Those methods import marimo lazily, so the rest of the library can
+be used without it installed.
 """
 
 import json
 from pathlib import Path
 from typing import Any, Sequence
-import marimo as mo
 
 
 class Parameters:
@@ -104,6 +104,8 @@ class Parameters:
         parameter store's value for ``key``. Changes are persisted via
         ``on_change`` calling :meth:`set` with ``key``.
         """
+        import marimo as mo
+
 
         user_on_change = kwargs.pop("on_change", None)
 
@@ -132,6 +134,8 @@ class Parameters:
         through to ``marimo.ui.dropdown``. Changes are persisted via
         ``on_change`` calling :meth:`set` with ``key``.
         """
+        import marimo as mo
+
 
         user_on_change = kwargs.pop("on_change", None)
 
@@ -164,6 +168,8 @@ class Parameters:
         ``options`` is passed through to ``marimo.ui.multiselect``.
         Changes are persisted via ``on_change`` calling :meth:`set` with ``key``.
         """
+        import marimo as mo
+
 
         user_on_change = kwargs.pop("on_change", None)
 
@@ -195,6 +201,8 @@ class Parameters:
         parameter store's value for ``key``. Changes are persisted via
         ``on_change`` calling :meth:`set` with ``key``.
         """
+        import marimo as mo
+
 
         user_on_change = kwargs.pop("on_change", None)
 
@@ -220,6 +228,8 @@ class Parameters:
         is this parameter store's value for ``key`` (coerced to bool).
         Changes are persisted via ``on_change`` calling :meth:`set` with ``key``.
         """
+        import marimo as mo
+
 
         user_on_change = kwargs.pop("on_change", None)
 

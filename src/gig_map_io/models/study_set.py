@@ -46,9 +46,9 @@ class StudySet:
             raise ValueError("StudySet requires at least one study")
 
     @classmethod
-    def from_json(cls, *paths: str | Path, base: str | Path | None = None) -> "StudySet":
+    def from_json(cls, *paths: str | Path, datasets: str | Path = "datasets") -> "StudySet":
         """Read several study definitions from JSON files."""
-        return cls([Study.from_json(path, base=base) for path in paths])
+        return cls([Study.from_json(path, datasets=datasets) for path in paths])
 
     def __repr__(self) -> str:
         return f"StudySet(studies={[study.name for study in self.studies]})"
@@ -91,8 +91,8 @@ class StudySet:
     @cached_property
     def sample_metadata(self) -> pd.DataFrame:
         """
-        Sample annotations for every study, with one column per shared sample
-        group plus a ``study`` column naming the cohort each sample came from.
+        Sample annotations for every study, one column per shared sample
+        group.
         """
         return pd.concat(
             [study.sample_metadata(REQUIRED_SAMPLE_GROUPS) for study in self.studies]
@@ -181,9 +181,12 @@ class StudySet:
         file_prefix: str | None = None,
     ) -> pd.DataFrame:
         """
-        Run PERMANOVA separately within each cohort, for each sample group.
+        Run PERMANOVA separately within each study, for each sample group.
 
-        Returns the long-form results (one row per cohort per category). When
+        Testing within study rather than across all samples keeps differences
+        between studies from being attributed to the variable of interest.
+
+        Returns the long-form results (one row per study per category). When
         ``file_prefix`` is given, a wide table is also written as CSV.
         """
         rpkm = self.features(features)
@@ -191,10 +194,10 @@ class StudySet:
 
         results = pd.concat([
             permanova(
-                scalars_df=rpkm.reindex(index=cohort_metadata.index),
-                metadata_df=cohort_metadata.reindex(columns=list(categories)),
-            ).assign(study=cohort)
-            for cohort, cohort_metadata in metadata.groupby("study")
+                scalars_df=rpkm.reindex(index=study_metadata.index),
+                metadata_df=study_metadata.reindex(columns=list(categories)),
+            ).assign(study=study)
+            for study, study_metadata in metadata.groupby("study")
         ])
 
         if file_prefix is not None:
@@ -309,15 +312,15 @@ class StudySet:
     ) -> go.Figure:
         """
         Heatmap of the association between community type and disease state,
-        for each organism and cohort.
+        for each organism and study.
         """
         rows = []
         for organism, df in clusters.items():
-            for cohort, cohort_df in df.groupby("study"):
-                result = chi2_contingency_test(df=cohort_df, col_a="cluster", col_b="disease")
+            for study, study_df in df.groupby("study"):
+                result = chi2_contingency_test(df=study_df, col_a="cluster", col_b="disease")
                 rows.append({
                     "organism": organism,
-                    "study": cohort,
+                    "study": study,
                     "cramers_v": result["cramers_v"],
                     "label": f'V={result["cramers_v"]:.2} {_significance_stars(result["p_value"])}',
                 })

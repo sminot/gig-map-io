@@ -42,9 +42,13 @@ class Study:
         Name of the association parameter tested in the contrasts. ``None``
         for studies that hold only pangenome/phylogeny outputs.
     contrasts, pangenomes, phylogenies:
-        Maps of organism name to the output directory for that workflow.
-        Paths are resolved relative to ``base``, which defaults to the
-        current working directory.
+        Maps of organism name to the output directory for that workflow,
+        named relative to the root of the dataset collection rather than to
+        any particular filesystem.
+    datasets:
+        Where that collection lives. Defaults to ``datasets`` in the current
+        working directory; pass it explicitly to read the same definition
+        against a copy of the data somewhere else.
     sample_groups:
         Named recodings of the contrast metadata into labelled categoricals
         (see :class:`~gig_map_io.models.sample_group.SampleGroup`).
@@ -59,7 +63,7 @@ class Study:
         pangenomes: Dict[str, str] | None = None,
         phylogenies: Dict[str, str] | None = None,
         sample_groups: Dict[str, SampleGroup] | None = None,
-        base: str | Path | None = None,
+        datasets: str | Path = "datasets",
     ) -> None:
         self.name = name
         self.label = label if label is not None else name
@@ -68,7 +72,7 @@ class Study:
         self.pangenome_dirs = dict(pangenomes or {})
         self.phylogeny_dirs = dict(phylogenies or {})
         self.sample_groups = dict(sample_groups or {})
-        self.base = Path(base) if base is not None else Path.cwd()
+        self.datasets = Path(datasets)
 
         if self.contrast_dirs and self.parameter is None:
             raise ValueError(f"Study {name!r} defines contrasts but no parameter")
@@ -76,12 +80,13 @@ class Study:
     # --- Serialization ----------------------------------------------------
 
     @classmethod
-    def from_json(cls, path: str | Path, base: str | Path | None = None) -> "Study":
+    def from_json(cls, path: str | Path, datasets: str | Path = "datasets") -> "Study":
         """
         Read a study definition from a JSON file.
 
-        Paths inside the file are resolved relative to ``base`` (the current
-        working directory by default), not to the location of the JSON file.
+        The dataset directories named inside the file are resolved against
+        ``datasets``, not against the location of the JSON file, so a
+        definition stays valid wherever the data has been copied to.
         """
         with Path(path).open() as handle:
             spec = json.load(handle)
@@ -97,7 +102,7 @@ class Study:
                 key: SampleGroup.from_dict(val)
                 for key, val in spec.get("sample_groups", {}).items()
             },
-            base=base,
+            datasets=datasets,
         )
 
     def to_json(self, path: str | Path) -> None:
@@ -134,7 +139,7 @@ class Study:
     # --- Reader objects ---------------------------------------------------
 
     def _resolve(self, dirs: Dict[str, str]) -> Dict[str, Path]:
-        return {name: self.base / path for name, path in dirs.items()}
+        return {name: self.datasets / path for name, path in dirs.items()}
 
     @cached_property
     def contrasts(self) -> ContrastMetagenomesSet:
