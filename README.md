@@ -70,9 +70,9 @@ A study definition lists the dataset directories that belong together:
   "name": "gvhd_combined",
   "label": "GvHD - Combined",
   "parameter": "disease",
-  "contrasts": {"Alistipes": "datasets/Contrast - .../data"},
-  "pangenomes": {"Alistipes": "datasets/Pangenome - .../data"},
-  "phylogenies": {"Alistipes": "datasets/Phylogenies - .../data"},
+  "contrasts": {"Alistipes": "Contrast - GvHD Cohorts - Alistipes (n=414) - .../data"},
+  "pangenomes": {"Alistipes": "Pangenome - Alistipes (n=414) (9540b5)/data"},
+  "phylogenies": {"Alistipes": "Phylogenies - Alistipes (n=414) (a057ba)/data"},
   "sample_groups": {
     "disease": {
       "sources": [{"column": "disease", "labels": {"1": "Case", "0": "Control"}}],
@@ -82,14 +82,15 @@ A study definition lists the dataset directories that belong together:
 }
 ```
 
-Paths are resolved relative to the current working directory (or to a `base`
-you pass), so a definition travels with the data rather than with the machine
-it was written on.
+Each dataset is named relative to the root of the collection, and that root is
+supplied when the study is loaded (`datasets="datasets"` by default). The same
+definition therefore resolves against a checkout, a download somewhere else, or
+a workflow task with the data staged beside it.
 
 ```python
 from gig_map_io import Study
 
-study = Study.from_json("studies/gvhd_combined.json")
+study = Study.from_json("studies/gvhd_combined.json", datasets="/data/pangenomes")
 
 study.volcano_plot(max_abs_estimate=2.5, file_prefix="out/volcano")
 study.significant_bins(estimate_thresh=0.25, fdr_thresh=0.2, direction="negative")
@@ -135,12 +136,39 @@ studies.pangenome_clusters("Alistipes")             # Leiden community types
 studies.classify_by_organism()                      # XGBoost + SHAP per organism
 ```
 
+### Running an analysis as a script
+
+`AnalysisScript` gives a script the same command line whether it runs from a
+checkout or inside a workflow that stages its inputs somewhere else:
+
+```python
+from gig_map_io import AnalysisScript
+
+script = AnalysisScript(
+    __file__,
+    inputs={"bins": "associated_bins/candidate_bins/02_negative_in_both/bins.csv"},
+    description=__doc__,
+)
+
+study = script.study("gvhd_combined")
+bins = pd.read_csv(script.input("bins"), index_col=[0, 1])
+study.bin_abundance_heatmap(bins.index, file_prefix=script.output("figure"))
+```
+
+It exposes `--datasets`, `--studies`, `--output-dir`, and one option per
+declared input, each defaulting to where that thing sits in a checkout.
+
 ## Reproducibility
 
 Anything that subsamples takes a `random_state` and defaults to a fixed seed,
 so re-running a figure reproduces it. Note that t-SNE and Leiden are both
 sensitive to the order of rows and columns in the input, so a study definition
 that lists its organisms in a stable order matters for more than tidiness.
+
+Plotly's static image export renders text through a browser, so PNG and PDF
+output differs slightly between machines with different font stacks even when
+the underlying figure is identical. The JSON that `save_image` writes alongside
+them is the exact figure specification, and does not.
 
 ## License
 
