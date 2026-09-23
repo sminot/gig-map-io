@@ -5,21 +5,27 @@ This library provides:
 
 - **Reader objects** (one per gig-map workflow): each reads the key outputs of
   that workflow. Use ``Pangenome``, ``ContrastMetagenomes``, and
-  ``PangenomePhylogeny`` for the main workflows.
-  ``ContrastMetagenomesSet`` wraps a dict of ``ContrastMetagenomes``
-  keyed by pangenome name to combine analyses across pangenomes.
+  ``PangenomePhylogeny`` for the main workflows. The ``*Set`` variants wrap a
+  dict of readers keyed by organism, to combine analyses across pangenomes.
 
-- **Plotting functions**: take one or more reader objects and produce common
-  plots (volcano, bin abundance, bin phylogeny).
+- **Study definitions**: ``Study`` names the gig-map outputs that belong to one
+  comparison and is serialized as JSON, so an analysis script loads a study by
+  path and calls a single method on it. ``StudySet`` spans several studies.
+
+- **Plotting and analysis methods** on those objects: volcano plots, contrast
+  comparisons, pangenome summaries, community ordination, and clustering.
 """
 
-from .core import (
+from .models import (
     ContrastMetagenomesSet,
     ContrastMetagenomes,
     Pangenome,
     PangenomeSet,
     PangenomePhylogeny,
     PangenomePhylogenySet,
+    SampleGroup,
+    Study,
+    StudySet,
 )
 from .parameters import Parameters
 
@@ -30,6 +36,8 @@ __all__ = [
     "PangenomeSet",
     "PangenomePhylogeny",
     "PangenomePhylogenySet",
-    "Parameters"
+    "SampleGroup",
+    "Study",
+    "StudySet",
+    "Parameters",
 ]
-

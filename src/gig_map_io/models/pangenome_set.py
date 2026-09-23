@@ -51,6 +51,14 @@ class PangenomeSet(DatasetDict):
             for pangenome_name, pangenome in self.pangenomes.items()
         ])
 
+    @cached_property
+    def core_genomes(self) -> Dict[str, str]:
+        """The bin representing the core genome of each pangenome."""
+        return {
+            pangenome_name: pangenome.core_genome()
+            for pangenome_name, pangenome in self.pangenomes.items()
+        }
+
     def find_enriched_annotation_terms(
         self,
         features: pd.MultiIndex,

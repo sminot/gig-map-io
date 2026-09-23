@@ -109,7 +109,8 @@ class ContrastMetagenomes(Dataset):
         ref_group,
         comp_group,
         bin_id: str,
-        query_str=None
+        query_str=None,
+        samples: pd.Index | None = None
     ):
         """
         For an organism, calculate the AUC for one bin with respect to a particular metadata column.
@@ -120,7 +121,7 @@ class ContrastMetagenomes(Dataset):
         from sklearn import metrics
 
         # Make a DataFrame with the bin RPKM and metadata values, with ref_group and comp_group -> 0/1
-        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str)
+        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str, samples)
 
         return metrics.roc_auc_score(df['x'], df['rpkm'])
 
@@ -131,12 +132,14 @@ class ContrastMetagenomes(Dataset):
         comp_group,
         bin_id: str,
         query_str=None,
+        samples: pd.Index | None = None,
         threshold="median"
     ):
         """
         For an organism, calculate the odds ratio for one bin with respect to a particular metadata column.
         The user specifies a reference group and comparison group, both of which must be
         values present in the metadata column.
+        Pass `samples` to restrict the calculation to a subset of samples.
         The threshold can be set as the "median", "mean", a specific RPKM value, or None.
         When None, all unique RPKM values are tested as thresholds and the one yielding the
         largest absolute odds ratio (furthest from 1 on a log scale) is returned.
@@ -145,7 +148,7 @@ class ContrastMetagenomes(Dataset):
         from scipy import stats
 
         # Make a DataFrame with the bin RPKM and metadata values, with ref_group and comp_group -> 0/1
-        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str)
+        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str, samples)
 
         def _or_at_threshold(t):
             d = df.assign(present=(df["rpkm"] >= t).astype(int))
@@ -186,6 +189,7 @@ class ContrastMetagenomes(Dataset):
         comp_group,
         bin_id: str,
         query_str=None,
+        samples: pd.Index | None = None,
     ) -> dict:
         """
         For an organism, perform logistic regression for one bin with respect to a particular
@@ -198,7 +202,7 @@ class ContrastMetagenomes(Dataset):
         """
         import statsmodels.api as sm
 
-        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str)
+        df = self._make_bin_metadata_df(metadata_col, ref_group, comp_group, bin_id, query_str, samples)
 
         X = sm.add_constant(df["rpkm"])
         y = df["x"]
@@ -224,6 +228,7 @@ class ContrastMetagenomes(Dataset):
         comp_group,
         bin_id: str,
         query_str=None,
+        samples: pd.Index | None = None,
     ) -> pd.DataFrame:
 
         assert metadata_col in self.metadata
@@ -232,6 +237,8 @@ class ContrastMetagenomes(Dataset):
         metadata = self.metadata.copy()
         if query_str is not None:
             metadata = metadata.query(query_str)
+        if samples is not None:
+            metadata = metadata.loc[metadata.index.intersection(samples)]
 
         df = pd.DataFrame(dict(
             groups=metadata[metadata_col],

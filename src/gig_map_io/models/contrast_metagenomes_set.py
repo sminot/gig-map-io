@@ -540,7 +540,8 @@ class ContrastMetagenomesSet(DatasetDict):
         ref_group,
         comp_group,
         bin_id: str,
-        query_str=None
+        query_str=None,
+        samples: pd.Index | None = None
     ):
         """
         For an organism, calculate the AUC for one bin with respect to a particular metadata column.
@@ -553,7 +554,8 @@ class ContrastMetagenomesSet(DatasetDict):
             ref_group=ref_group,
             comp_group=comp_group,
             bin_id=bin_id,
-            query_str=query_str
+            query_str=query_str,
+            samples=samples
         )
 
     def calc_odds_ratio(
@@ -564,6 +566,7 @@ class ContrastMetagenomesSet(DatasetDict):
         comp_group,
         bin_id: str,
         query_str=None,
+        samples: pd.Index | None = None,
         threshold="median"
     ):
         """
@@ -579,6 +582,7 @@ class ContrastMetagenomesSet(DatasetDict):
             comp_group=comp_group,
             bin_id=bin_id,
             query_str=query_str,
+            samples=samples,
             threshold=threshold
         )
 

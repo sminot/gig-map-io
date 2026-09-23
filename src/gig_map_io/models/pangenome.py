@@ -187,6 +187,25 @@ class Pangenome(Dataset):
         """
         return self.gene_bins["bin"].value_counts()
 
+    def core_genome(self, prop_genes_detected: float = 0.9) -> str:
+        """
+        The bin that best represents the core genome of this pangenome.
+
+        Picks the bin detected near-completely (at least `prop_genes_detected`
+        of its genes) in the largest number of genomes, breaking ties by the
+        number of genes in the bin.
+        """
+        counts = (
+            self.genome_content
+            .query(f"prop_genes_detected >= {prop_genes_detected}")
+            .groupby("bin")
+            .size()
+            .to_frame(name="n_genomes")
+            .assign(n_genes=self.bin_size)
+            .sort_values(by=["n_genomes", "n_genes"], ascending=False)
+        )
+        return counts.index.values[0]
+
     def bin_genome_heatmap(
         self,
         width: int = 500,
