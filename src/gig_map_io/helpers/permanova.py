@@ -114,6 +114,6 @@ def permanova(
 
     return (
         pd.DataFrame(results)
-        .sort_values("r_squared", ascending=False)
+        .sort_values(["r_squared", "category"], ascending=[False, True])
         .reset_index(drop=True)
     )

@@ -335,7 +335,8 @@ class Study:
 
         df = pd.DataFrame(rows)
         df["qvalue"] = multipletests(df["pvalue"], method="fdr_bh")[1]
-        return df.sort_values("pvalue").reset_index(drop=True)
+        # Organisms contributing no bins all share a p-value of 1
+        return df.sort_values(["pvalue", "organism"]).reset_index(drop=True)
 
     def organism_enrichment(
         self,
@@ -438,9 +439,13 @@ class Study:
             enrichment = self.annotation_enrichment(enrichment)
 
         significant = enrichment.loc[enrichment["qvalue"] < qvalue_threshold]
+        # Break ties on the term itself, so that which terms make the cut does
+        # not depend on the order they happened to be collected in
         keep = (
             significant.groupby("term")["pvalue"].min()
-            .sort_values().head(max_terms).index
+            .reset_index()
+            .sort_values(["pvalue", "term"])
+            .head(max_terms)["term"]
         )
         return _enrichment_figure(
             enrichment.loc[enrichment["term"].isin(keep)],

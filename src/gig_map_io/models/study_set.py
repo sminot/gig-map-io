@@ -586,7 +586,9 @@ class StudySet:
 
         return {
             "replicates": pd.DataFrame(replicates),
-            "shap": shap.sort_values("combined", ascending=False),
+            "shap": shap.sort_values(
+                ["combined", "organism", "bin"], ascending=[False, True, True]
+            ),
             "interactions": pd.concat(interactions, ignore_index=True),
         }
 
@@ -643,7 +645,9 @@ class StudySet:
             raise ValueError("plot_shap_comparison compares exactly two studies")
         x_label, y_label = (study.label for study in self.studies)
 
-        df = shap.loc[shap["organism"] == organism].sort_values("combined", ascending=False)
+        df = shap.loc[shap["organism"] == organism].sort_values(
+            ["combined", "bin"], ascending=[False, True]
+        )
         limit = max(df[x_label].max(), df[y_label].max()) * 1.08
 
         fig = px.scatter(

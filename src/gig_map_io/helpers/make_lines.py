@@ -43,7 +43,7 @@ def make_lines(
         to_plot.append(val)
     if neg:
         to_plot.append(-val)
-    to_plot = list(set(to_plot))
+    to_plot = sorted(set(to_plot))
 
     for val in to_plot:
         if hline:

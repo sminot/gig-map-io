@@ -196,7 +196,10 @@ class PangenomeSet(DatasetDict):
         reject, qvalues, _, _ = multipletests(df["pvalue"].values, method="fdr_bh")
         df["qvalue"] = qvalues
 
-        return df.sort_values("pvalue").reset_index(drop=True)
+        # Sorted by term as well as by p-value: many terms are carried by the
+        # same handful of bins and so share a p-value exactly, and the order
+        # they were collected in varies between processes.
+        return df.sort_values(["pvalue", "term"]).reset_index(drop=True)
 
     def plot_enriched_annotation_terms(
         self,
@@ -233,7 +236,9 @@ class PangenomeSet(DatasetDict):
         else:
             enrichment_df = features
 
-        df = enrichment_df[enrichment_df["qvalue"] < qvalue_threshold].sort_values("odds_ratio")
+        df = enrichment_df[enrichment_df["qvalue"] < qvalue_threshold].sort_values(
+            ["odds_ratio", "term"]
+        )
 
         hover = {"qvalue": ":.2e", "odds_ratio": ":.2f", "n_foreground": True, "n_background": True}
         common = dict(orientation="h", template="plotly_white")
