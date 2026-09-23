@@ -11,13 +11,16 @@ copy of the data.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
 from plotly import graph_objects as go
+from plotly.subplots import make_subplots
 
 from .contrast_metagenomes import ContrastMetagenomes
 from .contrast_metagenomes_set import ContrastMetagenomesSet
@@ -26,6 +29,7 @@ from .pangenome_set import PangenomeSet
 from .phylogeny import PangenomePhylogeny
 from .phylogeny_set import PangenomePhylogenySet
 from .sample_group import SampleGroup
+from ..helpers.save_image import save_image
 
 
 class Study:
@@ -240,6 +244,216 @@ class Study:
             raise ValueError("direction must be 'positive', 'negative', or None")
         return df.sort_values(by="pvalue")
 
+    @cached_property
+    def tested_bins(self) -> pd.MultiIndex:
+        """
+        The (pangenome, bin) pairs the association analysis covered.
+
+        This is the right background for asking what is over-represented among
+        the bins it called significant: a bin that was never tested had no
+        chance of being called.
+        """
+        return pd.MultiIndex.from_frame(
+            self.association[["pangenome", "feature"]], names=["pangenome", "bin"]
+        )
+
+    def significant_bins_by_direction(
+        self,
+        estimate_thresh: float = 0.25,
+        fdr_thresh: float = 0.2,
+    ) -> Dict[str, pd.MultiIndex]:
+        """
+        The significant bins split by the direction of their effect, as a map
+        of label to (pangenome, bin) pairs.
+        """
+        return {
+            label: self.significant_bins(estimate_thresh, fdr_thresh, direction).index
+            for label, direction in [
+                ("Positively associated", "positive"),
+                ("Negatively associated", "negative"),
+            ]
+        }
+
+    # --- Enrichment among a set of bins ------------------------------------
+
+    def find_enriched_organisms(
+        self,
+        features: pd.MultiIndex | pd.DataFrame,
+        alternative: str = "greater",
+    ) -> pd.DataFrame:
+        """
+        Test whether each organism contributed more bins to the given set than
+        its share of the bins this study tested.
+
+        Fisher's exact test per organism, FDR-corrected across organisms.
+
+        Returns
+        -------
+        DataFrame with one row per organism: the number of its bins in the
+        foreground and in the background, the totals, the odds ratio, and the
+        p- and q-values.
+        """
+        from scipy import stats
+        from statsmodels.stats.multitest import multipletests
+
+        index = features.index if isinstance(features, pd.DataFrame) else features
+        foreground = set(index)
+        universe = set(self.tested_bins)
+
+        untested = foreground - universe
+        if untested:
+            raise ValueError(
+                f"{len(untested)} of the given bins were not tested by study "
+                f"{self.name!r}, e.g. {sorted(untested)[0]}"
+            )
+
+        foreground_counts = Counter(organism for organism, _ in foreground)
+        universe_counts = Counter(organism for organism, _ in universe)
+        n_foreground = len(foreground)
+        n_background = len(universe) - n_foreground
+
+        rows = []
+        for organism in self.organisms:
+            in_foreground = foreground_counts.get(organism, 0)
+            in_background = universe_counts.get(organism, 0) - in_foreground
+            odds_ratio, pvalue = stats.fisher_exact(
+                [
+                    [in_foreground, in_background],
+                    [n_foreground - in_foreground, n_background - in_background],
+                ],
+                alternative=alternative,
+            )
+            rows.append({
+                "organism": organism,
+                "n_foreground": in_foreground,
+                "n_background": in_background,
+                "n_foreground_total": n_foreground,
+                "n_background_total": n_background,
+                "odds_ratio": odds_ratio,
+                "pvalue": pvalue,
+            })
+
+        df = pd.DataFrame(rows)
+        df["qvalue"] = multipletests(df["pvalue"], method="fdr_bh")[1]
+        return df.sort_values("pvalue").reset_index(drop=True)
+
+    def organism_enrichment(
+        self,
+        groups: Dict[str, pd.MultiIndex] | None = None,
+        alternative: str = "greater",
+        **thresholds: float,
+    ) -> pd.DataFrame:
+        """
+        Organism enrichment for several sets of bins at once, tested
+        independently and labelled by a ``group`` column.
+
+        Defaults to the significant bins split by direction of effect.
+        """
+        groups = groups if groups is not None else self.significant_bins_by_direction(**thresholds)
+        return pd.concat(
+            [
+                self.find_enriched_organisms(index, alternative=alternative).assign(group=label)
+                for label, index in groups.items()
+            ],
+            ignore_index=True,
+        )
+
+    def annotation_enrichment(
+        self,
+        groups: Dict[str, pd.MultiIndex] | None = None,
+        min_count: int = 2,
+        alternative: str = "greater",
+        **thresholds: float,
+    ) -> pd.DataFrame:
+        """
+        Annotation term enrichment for several sets of bins at once, tested
+        independently against the bins this study covered and labelled by a
+        ``group`` column.
+
+        Defaults to the significant bins split by direction of effect.
+        """
+        groups = groups if groups is not None else self.significant_bins_by_direction(**thresholds)
+        return pd.concat(
+            [
+                self.pangenomes.find_enriched_annotation_terms(
+                    index,
+                    min_count=min_count,
+                    alternative=alternative,
+                    universe=self.tested_bins,
+                ).assign(group=label)
+                for label, index in groups.items()
+            ],
+            ignore_index=True,
+        )
+
+    def plot_organism_enrichment(
+        self,
+        enrichment: pd.DataFrame | Dict[str, pd.MultiIndex] | None = None,
+        qvalue_threshold: float = 0.2,
+        width: int = 800,
+        height: int = 450,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        How many bins each organism contributed to each set, and how far that
+        is from its share of the bins this study tested.
+
+        Takes the output of :meth:`organism_enrichment`, a map of label to
+        bins, or nothing at all (in which case the significant bins are split
+        by direction of effect).
+        """
+        if not isinstance(enrichment, pd.DataFrame):
+            enrichment = self.organism_enrichment(enrichment)
+
+        return _enrichment_figure(
+            enrichment,
+            label="organism",
+            axis_title="Organism",
+            title=f"{self.label} - organisms among the associated bins",
+            qvalue_threshold=qvalue_threshold,
+            order=list(reversed(self.organisms)),
+            width=width,
+            height=height,
+            file_prefix=file_prefix,
+        )
+
+    def plot_annotation_enrichment(
+        self,
+        enrichment: pd.DataFrame | Dict[str, pd.MultiIndex] | None = None,
+        qvalue_threshold: float = 0.2,
+        max_terms: int = 20,
+        width: int = 900,
+        height: int = 600,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        Annotation terms over-represented in each set of bins, relative to the
+        bins this study tested.
+
+        Takes the output of :meth:`annotation_enrichment`, a map of label to
+        bins, or nothing at all (in which case the significant bins are split
+        by direction of effect).
+        """
+        if not isinstance(enrichment, pd.DataFrame):
+            enrichment = self.annotation_enrichment(enrichment)
+
+        significant = enrichment.loc[enrichment["qvalue"] < qvalue_threshold]
+        keep = (
+            significant.groupby("term")["pvalue"].min()
+            .sort_values().head(max_terms).index
+        )
+        return _enrichment_figure(
+            enrichment.loc[enrichment["term"].isin(keep)],
+            label="term",
+            axis_title="Annotation Term",
+            title=f"{self.label} - annotations among the associated bins",
+            qvalue_threshold=qvalue_threshold,
+            order=None,
+            width=width,
+            height=height,
+            file_prefix=file_prefix,
+        )
+
     # --- Pangenome-level plots --------------------------------------------
 
     @cached_property
@@ -358,3 +572,67 @@ class Study:
         return pd.DataFrame(rows, index=pd.MultiIndex.from_tuples(
             list(index), names=["pangenome", "bin"]
         ))
+
+
+def _enrichment_figure(
+    enrichment: pd.DataFrame,
+    label: str,
+    axis_title: str,
+    title: str,
+    qvalue_threshold: float,
+    order: List[str] | None,
+    width: int,
+    height: int,
+    file_prefix: str | None,
+) -> go.Figure:
+    """
+    Two panels sharing a category axis: how many bins of each category fell in
+    each group, and how enriched that is. Bars are grouped by the set the bins
+    came from, so the two directions of effect can be read against each other.
+
+    Odds ratios are shown on a log2 scale, which is symmetric about no
+    enrichment, and marked where they clear the q-value threshold. A category
+    with no bins at all in a group has nothing to say about enrichment, so no
+    bar is drawn for it; one whose bins are *all* in the foreground has an
+    infinite odds ratio and is drawn at the edge of the observed range.
+    """
+    df = enrichment.copy()
+    log2_odds = np.log2(df["odds_ratio"].replace({0: np.nan, np.inf: np.nan}).astype(float))
+    limit = float(np.nanmax(np.abs(log2_odds))) if log2_odds.notna().any() else 1.0
+
+    unbounded = np.isinf(df["odds_ratio"]) & (df["n_foreground"] > 0)
+    df["log2_odds_ratio"] = log2_odds.where(~unbounded, limit)
+    # Nothing observed means no evidence either way, rather than depletion
+    df.loc[df["n_foreground"] == 0, "log2_odds_ratio"] = np.nan
+    df["mark"] = np.where(df["qvalue"] < qvalue_threshold, "*", "")
+
+    category_orders = {"group": list(dict.fromkeys(enrichment["group"]))}
+    if order is not None:
+        category_orders[label] = order
+
+    hover = {"qvalue": ":.2e", "odds_ratio": ":.3g", "n_foreground": True, "n_background": True}
+    shared = dict(
+        data_frame=df, y=label, color="group", orientation="h", barmode="group",
+        template="plotly_white", hover_data=hover, category_orders=category_orders,
+    )
+
+    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.06)
+    for trace in px.bar(x="n_foreground", **shared).data:
+        fig.add_trace(trace, row=1, col=1)
+    for trace in px.bar(x="log2_odds_ratio", text="mark", **shared).data:
+        fig.add_trace(trace.update(showlegend=False, textposition="outside"), row=1, col=2)
+
+    fig.add_vline(x=0, line_dash="dot", line_color="grey", row=1, col=2)
+    fig.update_layout(
+        width=width,
+        height=height,
+        title=title,
+        template="plotly_white",
+        legend_title_text="",
+        legend=dict(orientation="h", y=-0.15),
+        xaxis=dict(title="Bins"),
+        xaxis2=dict(title=f"Log2 Odds Ratio (* q < {qvalue_threshold})"),
+        yaxis=dict(title=axis_title, automargin=True),
+    )
+    save_image(fig, file_prefix)
+    return fig

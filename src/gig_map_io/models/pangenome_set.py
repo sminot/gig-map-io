@@ -64,10 +64,11 @@ class PangenomeSet(DatasetDict):
         features: pd.MultiIndex,
         min_count: int = 2,
         alternative: str = "greater",
+        universe: pd.MultiIndex | None = None,
     ) -> pd.DataFrame:
         """
         Find annotation terms statistically over-represented in the given set of bins
-        compared to the background of all bins in the PangenomeSet.
+        compared to the background of all other bins.
 
         Parameters
         ----------
@@ -77,6 +78,10 @@ class PangenomeSet(DatasetDict):
             Minimum number of foreground bins a term must appear in to be tested.
         alternative : str
             Alternative hypothesis for Fisher's exact test ('greater', 'less', or 'two-sided').
+        universe : pd.MultiIndex, optional
+            The bins that could have been in the foreground. Defaults to every
+            bin in the set; pass the bins an analysis actually covered to keep
+            untested bins out of the background.
 
         Returns
         -------
@@ -115,6 +120,9 @@ class PangenomeSet(DatasetDict):
 
         # Split into foreground and background
         fg_index = set(features)
+        if universe is not None:
+            considered = set(universe) | fg_index
+            bin_terms = bin_terms.loc[[k in considered for k in bin_terms.index]]
         fg_bins = {k: v for k, v in bin_terms.items() if k in fg_index}
         bg_bins = {k: v for k, v in bin_terms.items() if k not in fg_index}
 
@@ -190,6 +198,7 @@ class PangenomeSet(DatasetDict):
         qvalue_threshold: float = 0.2,
         min_count: int = 2,
         alternative: str = "greater",
+        universe: pd.MultiIndex | None = None,
         width: int = 800,
         height: int = 500,
         file_prefix: str | None = None,
@@ -208,10 +217,12 @@ class PangenomeSet(DatasetDict):
             Passed to find_enriched_annotation_terms when features is a MultiIndex.
         alternative : str
             Passed to find_enriched_annotation_terms when features is a MultiIndex.
+        universe : pd.MultiIndex, optional
+            Passed to find_enriched_annotation_terms when features is a MultiIndex.
         """
         if isinstance(features, pd.MultiIndex):
             enrichment_df = self.find_enriched_annotation_terms(
-                features, min_count=min_count, alternative=alternative
+                features, min_count=min_count, alternative=alternative, universe=universe
             )
         else:
             enrichment_df = features
