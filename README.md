@@ -167,8 +167,10 @@ that lists its organisms in a stable order matters for more than tidiness.
 
 Plotly's static image export renders text through a browser, so PNG and PDF
 output differs slightly between machines with different font stacks even when
-the underlying figure is identical. The JSON that `save_image` writes alongside
-them is the exact figure specification, and does not.
+the underlying figure is identical, and PDFs carry a creation timestamp so they
+differ on every run regardless. The JSON that `save_image` writes alongside them
+is the exact figure specification: compare that when you need to know whether a
+figure really changed.
 
 ## License
 
