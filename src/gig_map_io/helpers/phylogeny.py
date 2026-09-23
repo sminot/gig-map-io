@@ -225,7 +225,7 @@ class Phylogeny:
     def _score_tree_alignment(self, comp: 'Phylogeny'):
         self_leaf_order = self._leaf_order()
         comp_leaf_order = comp._leaf_order()
-        shared = list(set(self_leaf_order.keys()) & set(comp_leaf_order.keys()))
+        shared = sorted(set(self_leaf_order.keys()) & set(comp_leaf_order.keys()))
         res = stats.spearmanr(
             [self_leaf_order[i] for i in shared],
             [comp_leaf_order[i] for i in shared]
@@ -279,7 +279,10 @@ class Phylogeny:
         comp.find_coords()
 
         # Get the list of nodes which are found in common
-        shared_nodes = list(set(self._get_leafs(self.tree)) & set(comp._get_leafs(comp.tree)))
+        # Sorted, not merely deduplicated: this order is the order the tracer
+        # lines are added to the figure, and set iteration order varies between
+        # processes, which made the saved figure specification differ run to run.
+        shared_nodes = sorted(set(self._get_leafs(self.tree)) & set(comp._get_leafs(comp.tree)))
 
         # If the user wants to scale the total trees to be the same, just adjust the comp coordinates
         if scale_by == "Total Span" and len(shared_nodes) > 1:
@@ -385,7 +388,7 @@ class Phylogeny:
         Nodes are shared if both trees contain a node with the same set of leafs.
         """
         # Get the shared set of leafs for both trees
-        shared_leafs = list(set(self._get_leafs(self.tree)) & set(self._get_leafs(comp.tree)))
+        shared_leafs = sorted(set(self._get_leafs(self.tree)) & set(self._get_leafs(comp.tree)))
         # If there are fewer than 3 shared leafs, return null
         if len(shared_leafs) < 3:
             return
