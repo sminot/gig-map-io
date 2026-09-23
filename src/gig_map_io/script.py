@@ -36,9 +36,9 @@ class AnalysisScript:
         The script's own ``__file__``. Its directory is where outputs go by
         default, so moving the folder moves the outputs with it.
     inputs:
-        Files this script reads from earlier steps, as a map of argument name
-        to the path it has within ``analysis/``. Each becomes a ``--<name>``
-        option defaulting to that path.
+        Files this script reads from earlier steps, as a map of name to the
+        path it has within ``analysis/``. Each becomes a ``--<name>`` option
+        (with underscores written as dashes) defaulting to that path.
     description:
         Shown in ``--help``; pass the script's ``__doc__``.
 
@@ -94,7 +94,7 @@ class AnalysisScript:
         )
         for name, default in self.declared_inputs.items():
             parser.add_argument(
-                f"--{name}",
+                f"--{name.replace('_', '-')}",
                 type=Path,
                 default=DEFAULT_ANALYSIS_DIR / default,
                 help=f"Input read from an earlier step (default: %(default)s)",
