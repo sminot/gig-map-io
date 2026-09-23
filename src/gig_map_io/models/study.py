@@ -597,7 +597,10 @@ def _enrichment_figure(
     infinite odds ratio and is drawn at the edge of the observed range.
     """
     df = enrichment.copy()
-    log2_odds = np.log2(df["odds_ratio"].replace({0: np.nan, np.inf: np.nan}).astype(float))
+    for column in ["odds_ratio", "qvalue", "n_foreground", "n_background"]:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    log2_odds = np.log2(df["odds_ratio"].replace({0: np.nan, np.inf: np.nan}))
     limit = float(np.nanmax(np.abs(log2_odds))) if log2_odds.notna().any() else 1.0
 
     unbounded = np.isinf(df["odds_ratio"]) & (df["n_foreground"] > 0)
@@ -623,6 +626,15 @@ def _enrichment_figure(
         fig.add_trace(trace.update(showlegend=False, textposition="outside"), row=1, col=2)
 
     fig.add_vline(x=0, line_dash="dot", line_color="grey", row=1, col=2)
+
+    # An empty panel is indistinguishable from a broken one, so say which it is
+    if df.empty or not (df["n_foreground"] > 0).any():
+        fig.add_annotation(
+            text="No bins met the significance threshold",
+            showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
+            font=dict(color="grey"),
+        )
+
     fig.update_layout(
         width=width,
         height=height,

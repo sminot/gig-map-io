@@ -162,11 +162,17 @@ class PangenomeSet(DatasetDict):
             })
 
         if not results:
-            return pd.DataFrame(columns=[
-                "term", "n_foreground", "n_background",
-                "n_foreground_total", "n_background_total",
-                "odds_ratio", "pvalue", "qvalue"
-            ])
+            # Typed rather than bare, so that concatenating an empty result with
+            # a populated one does not turn the numbers into objects
+            return pd.DataFrame({
+                "term": pd.Series(dtype=str),
+                **{
+                    name: pd.Series(dtype=int)
+                    for name in ["n_foreground", "n_background",
+                                 "n_foreground_total", "n_background_total"]
+                },
+                **{name: pd.Series(dtype=float) for name in ["odds_ratio", "pvalue", "qvalue"]},
+            })
 
         df = pd.DataFrame(results)
 
