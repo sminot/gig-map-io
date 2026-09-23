@@ -215,14 +215,19 @@ class StudySet:
             "n_groups": "# Groups",
             "n_samples": "# Samples",
         }
+        # The sample count is the same for every category within a study, so it
+        # belongs on the index rather than in the body. Whether pandas drops an
+        # index level that also appears in `values` has changed between
+        # versions, so it is excluded here rather than left to that.
+        index = ["Study", "# Samples"]
         wide = (
             results
             .assign(category=results["category"].str.title())
             .rename(columns=lambda v: renamed.get(v, v.title()))
             .pivot_table(
                 columns="Category",
-                index=["Study", "# Samples"],
-                values=list(renamed.values()),
+                index=index,
+                values=[name for name in renamed.values() if name not in index],
             )
         )
         wide.columns = pd.MultiIndex.from_tuples(
