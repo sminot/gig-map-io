@@ -31,13 +31,13 @@ workflow (genes-in-genomes map) and running the analyses built on them.
 ## Installation
 
 ```bash
-pip install "gig-map-io @ git+https://github.com/FredHutch/gig-map-io.git"
+pip install "gig-map-io @ git+https://github.com/sminot/gig-map-io.git"
 ```
 
 For development:
 
 ```bash
-git clone https://github.com/FredHutch/gig-map-io.git
+git clone https://github.com/sminot/gig-map-io.git
 cd gig-map-io
 pip install -e ".[dev]"
 ```
