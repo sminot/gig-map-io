@@ -352,20 +352,28 @@ class ContrastMetagenomes(Dataset):
 
         fig = px.histogram(
             data_frame=df,
-            y="abundance",
+            x="abundance",
             template="plotly_white",
             width=width,
             height=height,
             **kwargs
         )
-        fig.update_xaxes(title_text=f"{kwargs.get('histnorm', 'number').title()} of Samples")
         fig.update_yaxes(
-            title_text=(
+            title_text=f"{kwargs.get('histnorm', 'number').title()} of Samples",
+            col=1
+        )
+
+        # Faceting repeats the x-axis title once per column, which collides for
+        # any label of a reasonable length. One centred caption instead.
+        fig.update_xaxes(title_text="")
+        fig.add_annotation(
+            text=(
                 f"Abundance of {bin} (RPKM)"
                 if norm_bin is None
                 else f"Abundance of {bin} / {norm_bin}"
             ),
-            col=1
+            xref="paper", yref="paper", x=0.5, y=0, yshift=-38,
+            showarrow=False,
         )
 
         # If save_image was provided, use the string as the file
