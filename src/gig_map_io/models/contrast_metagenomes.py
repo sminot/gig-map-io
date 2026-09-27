@@ -12,6 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from .dataset import Dataset
+from ..helpers.format_pvalue import format_pvalue
 from ..helpers.make_lines import make_lines
 from ..helpers.save_image import save_image
 
@@ -325,6 +326,120 @@ class ContrastMetagenomes(Dataset):
         # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
 
+        return fig
+
+    def bin_contingency(
+        self,
+        bin: str,
+        metadata_col: str,
+        norm_bin: str | None = None,
+        threshold: float = 0.25,
+    ) -> dict:
+        """
+        Call a bin present or absent in each sample, and cross that against a
+        metadata column.
+
+        A bin is called present where its abundance is at least `threshold`.
+        With `norm_bin` that abundance is relative to another bin -- normally
+        the core genome, which makes the threshold a fraction of the genome
+        copies carrying the bin rather than a raw depth.
+
+        Returns the 2x2 table together with Fisher's exact test of it.
+        """
+        from scipy import stats
+
+        assert bin in self.rpkm.columns, f"{bin} not found in rpkm.csv.gz"
+        assert metadata_col in self.metadata, f"{metadata_col} not found in metadata.csv"
+
+        abundance = (
+            self.rpkm[bin] if norm_bin is None else self.rpkm[bin] / self.rpkm[norm_bin]
+        )
+        df = pd.DataFrame({
+            "group": self.metadata[metadata_col],
+            "present": (abundance >= threshold),
+        }).dropna()
+
+        groups = sorted(df["group"].unique())
+        if len(groups) != 2:
+            raise ValueError(
+                f"{metadata_col} has {len(groups)} values {groups}; "
+                "a 2x2 contingency table needs exactly two"
+            )
+
+        table = (
+            pd.crosstab(df["present"], df["group"])
+            .reindex(index=[True, False], columns=groups)
+            .fillna(0)
+            .astype(int)
+        )
+        odds_ratio, pvalue = stats.fisher_exact(table.values)
+
+        return dict(
+            table=table,
+            odds_ratio=odds_ratio,
+            pvalue=pvalue,
+            threshold=threshold,
+            n=int(table.values.sum()),
+        )
+
+    def plot_bin_contingency(
+        self,
+        bin: str,
+        metadata_col: str,
+        norm_bin: str | None = None,
+        threshold: float = 0.25,
+        width: int = 520,
+        height: int = 460,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        The 2x2 table from :meth:`bin_contingency`, drawn as a matrix of counts
+        shaded by the share of each column, with Fisher's exact test reported
+        in the title.
+        """
+        result = self.bin_contingency(bin, metadata_col, norm_bin, threshold)
+        table = result["table"]
+
+        # Shade by column share, so the two groups are comparable even when
+        # they differ in size; the annotation still carries the raw count
+        share = table / table.sum(axis=0)
+        labels = table.astype(str) + "<br>" + (share * 100).round(0).astype(int).astype(str) + "%"
+
+        measured = (
+            f"{bin} / {norm_bin}" if norm_bin is not None else f"{bin} (RPKM)"
+        )
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=share.values,
+                x=[str(c) for c in table.columns],
+                y=["Present", "Absent"],
+                text=labels.values,
+                texttemplate="%{text}",
+                colorscale="Blues",
+                zmin=0,
+                zmax=1,
+                colorbar_title="Share of<br>group",
+            ),
+            layout=dict(
+                width=width,
+                height=height,
+                template="plotly_white",
+                # Broken across lines rather than one long subtitle, which
+                # the canvas clips at this width
+                title=(
+                    f"{bin} vs. {metadata_col}<br>"
+                    f"<sub>present at {measured} &#8805; {threshold:g}"
+                    f" &#183; n = {result['n']}<br>"
+                    f"odds ratio {result['odds_ratio']:.2f}"
+                    f" &#183; Fisher's exact p = {format_pvalue(result['pvalue'])}</sub>"
+                ),
+                xaxis_title=metadata_col,
+                yaxis_title=bin,
+                yaxis_autorange="reversed",
+            ),
+        )
+
+        save_image(fig, file_prefix)
         return fig
 
     def plot_bin_abundance(

@@ -499,6 +499,14 @@ class Study:
     def plot_bin_abundance(self, organism: str, bin: str, **kwargs: Any) -> go.Figure:
         return self.contrast(organism).plot_bin_abundance(bin, **kwargs)
 
+    def bin_contingency(self, organism: str, bin: str, **kwargs: Any) -> dict:
+        kwargs.setdefault("metadata_col", self.parameter)
+        return self.contrast(organism).bin_contingency(bin, **kwargs)
+
+    def plot_bin_contingency(self, organism: str, bin: str, **kwargs: Any) -> go.Figure:
+        kwargs.setdefault("metadata_col", self.parameter)
+        return self.contrast(organism).plot_bin_contingency(bin, **kwargs)
+
     def _compare(self, method: str, comparitor: "Study", kwargs: dict) -> go.Figure:
         kwargs.setdefault("self_label", self.label)
         kwargs.setdefault("comparitor_label", comparitor.label)
