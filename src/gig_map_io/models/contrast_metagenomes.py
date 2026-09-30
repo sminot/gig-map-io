@@ -13,6 +13,8 @@ import plotly.graph_objects as go
 
 from .dataset import Dataset
 from ..helpers.format_pvalue import format_pvalue
+from ..helpers.observed_expected import plot_observed_expected
+from .sample_group import _key as _label_key
 from ..helpers.make_lines import make_lines
 from ..helpers.save_image import save_image
 
@@ -374,8 +376,16 @@ class ContrastMetagenomes(Dataset):
         )
         odds_ratio, pvalue = stats.fisher_exact(table.values)
 
+        # From the margins, which is what "independent" means here
+        expected = pd.DataFrame(
+            np.outer(table.sum(axis=1), table.sum(axis=0)) / table.values.sum(),
+            index=table.index,
+            columns=table.columns,
+        )
+
         return dict(
             table=table,
+            expected=expected,
             odds_ratio=odds_ratio,
             pvalue=pvalue,
             threshold=threshold,
@@ -388,59 +398,52 @@ class ContrastMetagenomes(Dataset):
         metadata_col: str,
         norm_bin: str | None = None,
         threshold: float = 0.25,
-        width: int = 520,
-        height: int = 460,
+        group_labels: dict | None = None,
+        width: int = 640,
+        height: int = 470,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
-        The 2x2 table from :meth:`bin_contingency`, drawn as a matrix of counts
-        shaded by the share of each column, with Fisher's exact test reported
-        in the title.
+        The 2x2 table from :meth:`bin_contingency`, drawn the same way as the
+        study-concordance figure: the observed count of each combination
+        beside the count expected if bin presence and the metadata column were
+        independent.
+
+        ``group_labels`` renames the metadata values for display.
         """
         result = self.bin_contingency(bin, metadata_col, norm_bin, threshold)
         table = result["table"]
+        # Metadata values arrive as numbers while the study definition keys its
+        # labels by string, so both are normalized the same way
+        labels = {_label_key(k): v for k, v in (group_labels or {}).items()}
 
-        # Shade by column share, so the two groups are comparable even when
-        # they differ in size; the annotation still carries the raw count
-        share = table / table.sum(axis=0)
-        labels = table.astype(str) + "<br>" + (share * 100).round(0).astype(int).astype(str) + "%"
+        # Grouped by presence, so the two metadata groups sit side by side and
+        # the comparison the figure is for is the one between adjacent bars
+        ticks, groups, observed, expected = [], [], [], []
+        for present in (True, False):
+            for group in table.columns:
+                ticks.append(str(labels.get(_label_key(group), group)))
+                groups.append(f"{bin} {'present' if present else 'absent'}")
+                observed.append(int(table.loc[present, group]))
+                expected.append(result["expected"].loc[present, group])
 
-        measured = (
-            f"{bin} / {norm_bin}" if norm_bin is not None else f"{bin} (RPKM)"
-        )
-        fig = go.Figure(
-            data=go.Heatmap(
-                z=share.values,
-                x=[str(c) for c in table.columns],
-                y=["Present", "Absent"],
-                text=labels.values,
-                texttemplate="%{text}",
-                colorscale="Blues",
-                zmin=0,
-                zmax=1,
-                colorbar_title="Share of<br>group",
+        measured = f"{bin} / {norm_bin}" if norm_bin is not None else f"{bin} (RPKM)"
+        return plot_observed_expected(
+            ticks=ticks,
+            groups=groups,
+            observed=observed,
+            expected=expected,
+            title=f"Is {bin} more common in one {metadata_col} group?",
+            subtitle=(
+                f"present at {measured} &#8805; {threshold:g} &#183; n = {result['n']} "
+                f"&#183; odds ratio {result['odds_ratio']:.2f} "
+                f"&#183; Fisher's exact p = {format_pvalue(result['pvalue'])}"
             ),
-            layout=dict(
-                width=width,
-                height=height,
-                template="plotly_white",
-                # Broken across lines rather than one long subtitle, which
-                # the canvas clips at this width
-                title=(
-                    f"{bin} vs. {metadata_col}<br>"
-                    f"<sub>present at {measured} &#8805; {threshold:g}"
-                    f" &#183; n = {result['n']}<br>"
-                    f"odds ratio {result['odds_ratio']:.2f}"
-                    f" &#183; Fisher's exact p = {format_pvalue(result['pvalue'])}</sub>"
-                ),
-                xaxis_title=metadata_col,
-                yaxis_title=bin,
-                yaxis_autorange="reversed",
-            ),
+            y_title="Samples",
+            width=width,
+            height=height,
+            file_prefix=file_prefix,
         )
-
-        save_image(fig, file_prefix)
-        return fig
 
     def plot_bin_abundance(
         self,

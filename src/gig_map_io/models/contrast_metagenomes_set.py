@@ -17,6 +17,7 @@ from statsmodels.stats.multitest import multipletests
 from gig_map_io.helpers.make_lines import make_lines
 from gig_map_io.helpers.save_image import save_image
 from gig_map_io.helpers.format_pvalue import format_pvalue
+from gig_map_io.helpers.observed_expected import plot_observed_expected
 from .contrast_metagenomes import ContrastMetagenomes
 from .dataset_dict import DatasetDict
 
@@ -892,45 +893,6 @@ _SIG_CATEGORY_ORDER = [
     ("=", "=", "Neither"),
 ]
 
-_OBSERVED_COLOR = "#2c6fbb"
-_EXPECTED_COLOR = "#c3cedb"
-
-#: Below this expected count a fold change says more about rounding than about
-#: the data, and the chi-squared approximation is unreliable
-_MIN_EXPECTED_TO_LABEL = 5
-
-
-def _find_axis_break(
-    values: list[float],
-    min_gap: float = 3.0,
-    min_span: float = 6.0,
-    max_fraction_above: float = 0.40,
-) -> tuple[float, float] | None:
-    """
-    Where to split the count axis so that small categories stay legible beside
-    large ones, or ``None`` when one scale serves.
-
-    Only splits that leave most of the bars below the break are considered. The
-    point of the discontinuity is to lift a few outlying categories out of the
-    way; splitting at the largest gap wherever it falls can instead isolate one
-    small category and push everything else above the break, which is worse
-    than no break at all.
-    """
-    positive = sorted(v for v in values if v > 0)
-    n = len(positive)
-    if n < 3 or positive[-1] / positive[0] < min_span:
-        return None
-
-    first = max(1, int(np.ceil(n - 1 - n * max_fraction_above)))
-    candidates = [
-        (positive[i + 1] / positive[i], positive[i], positive[i + 1])
-        for i in range(first, n - 1)
-    ]
-    if not candidates:
-        return None
-    ratio, below, above = max(candidates)
-    return (below, above) if ratio >= min_gap else None
-
 
 def _plot_sig_categories(
     observed: pd.DataFrame,
@@ -950,91 +912,17 @@ def _plot_sig_categories(
         obs.append(observed.loc[comparitor_sig, self_sig])
         exp.append(expected.loc[comparitor_sig, self_sig])
 
-    axis_break = _find_axis_break(list(obs) + list(exp))
-    rows = 2 if axis_break else 1
-    fig = make_subplots(
-        rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04,
-        row_heights=[0.32, 0.68] if axis_break else [1.0],
+    return plot_observed_expected(
+        ticks=ticks,
+        groups=groups,
+        observed=obs,
+        expected=exp,
+        title=f"Do {self_label} and {comparitor_label} flag the same bins?",
+        subtitle=f"chi-squared p = {format_pvalue(pvalue)}",
+        y_title="Pangenome bins",
+        caption=f"Each tick: direction in <b>{self_label}</b> (upper) "
+                f"and <b>{comparitor_label}</b> (lower)",
+        width=width,
+        height=height,
+        file_prefix=file_prefix,
     )
-    for row in range(1, rows + 1):
-        fig.add_trace(
-            go.Bar(x=ticks, y=obs, name="Observed", marker_color=_OBSERVED_COLOR,
-                   showlegend=(row == 1)),
-            row=row, col=1,
-        )
-        fig.add_trace(
-            go.Bar(x=ticks, y=exp, name="Expected if independent",
-                   marker_color=_EXPECTED_COLOR, showlegend=(row == 1)),
-            row=row, col=1,
-        )
-
-    fig.update_layout(
-        barmode="group", bargap=0.32, bargroupgap=0.05, template="plotly_white",
-        width=width, height=height,
-        title=dict(
-            text=f"Do {self_label} and {comparitor_label} flag the same bins?"
-                 f"<br><sub>chi-squared p = {format_pvalue(pvalue)}</sub>",
-            x=0.5,
-        ),
-        # The title runs to two lines, so the legend needs to clear both
-        legend=dict(orientation="h", y=1.0, x=0.5, xanchor="center", yanchor="bottom"),
-        margin=dict(b=130, t=120, l=85),
-    )
-    fig.update_xaxes(tickfont=dict(size=13), row=rows, col=1)
-
-    if axis_break:
-        below, above = axis_break
-        fig.update_xaxes(showticklabels=False, row=1, col=1)
-        fig.update_yaxes(range=[above * 0.93, max(list(obs) + list(exp)) * 1.14], row=1, col=1)
-        fig.update_yaxes(range=[0, below * 1.32], row=2, col=1)
-        # Slashes across the axis at the discontinuity, so that the two panels
-        # are not read as one continuous scale
-        gap = (fig.layout.yaxis2.domain[1] + fig.layout.yaxis.domain[0]) / 2
-        for offset in (-0.007, 0.007):
-            fig.add_shape(
-                type="line", xref="paper", yref="paper",
-                x0=-0.010, x1=0.010,
-                y0=gap + offset - 0.015, y1=gap + offset + 0.015,
-                line=dict(color="#333333", width=1.3),
-            )
-    else:
-        fig.update_yaxes(range=[0, max(list(obs) + list(exp)) * 1.2], row=1, col=1)
-
-    for i, (o, e) in enumerate(zip(obs, exp)):
-        if e < _MIN_EXPECTED_TO_LABEL:
-            continue
-        row = 1 if (axis_break and max(o, e) >= axis_break[1]) else rows
-        fig.add_annotation(
-            x=i, y=max(o, e), text=f"{o / e:.2f}&#215;", showarrow=False,
-            yshift=10, font=dict(size=10, color="#444444"), row=row, col=1,
-        )
-
-    for i in range(len(groups) - 1):
-        if groups[i] != groups[i + 1]:
-            fig.add_vline(x=i + 0.5, line=dict(color="#e2e2e2", width=1), row="all", col=1)
-
-    start = 0
-    for i in range(1, len(groups) + 1):
-        if i == len(groups) or groups[i] != groups[start]:
-            fig.add_annotation(
-                x=(start + i - 1) / 2, y=0, yref="paper", text=f"<b>{groups[start]}</b>",
-                showarrow=False, yshift=-62, xanchor="center",
-                font=dict(size=11, color="#333333"),
-            )
-            start = i
-
-    # One title spanning both panels, rather than one centred on the lower
-    fig.update_yaxes(title_text="", row=rows, col=1)
-    fig.add_annotation(
-        x=0, xref="paper", y=0.5, yref="paper", xshift=-68, textangle=-90,
-        text="Pangenome bins", showarrow=False, font=dict(size=13, color="#2a3f5f"),
-    )
-    fig.add_annotation(
-        x=0.5, xref="paper", y=0, yref="paper", yshift=-96, xanchor="center",
-        showarrow=False, font=dict(size=11, color="#555555"),
-        text=f"Each tick: direction in <b>{self_label}</b> (upper) "
-             f"and <b>{comparitor_label}</b> (lower)",
-    )
-
-    save_image(fig, file_prefix)
-    return fig

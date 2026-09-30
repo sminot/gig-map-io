@@ -505,7 +505,21 @@ class Study:
 
     def plot_bin_contingency(self, organism: str, bin: str, **kwargs: Any) -> go.Figure:
         kwargs.setdefault("metadata_col", self.parameter)
+        kwargs.setdefault("group_labels", self._metadata_labels(kwargs["metadata_col"]))
         return self.contrast(organism).plot_bin_contingency(bin, **kwargs)
+
+    def _metadata_labels(self, metadata_col: str) -> Dict[str, str]:
+        """
+        Display names for the values of a metadata column, taken from whichever
+        sample group reads that column. Lets a figure say "BSI" where the
+        contrast says 1, without the analysis script repeating the mapping the
+        study definition already carries.
+        """
+        for group in self.sample_groups.values():
+            for source in group.sources:
+                if source.column == metadata_col and source.labels:
+                    return dict(source.labels)
+        return {}
 
     def _compare(self, method: str, comparitor: "Study", kwargs: dict) -> go.Figure:
         kwargs.setdefault("self_label", self.label)
