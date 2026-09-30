@@ -399,8 +399,8 @@ class ContrastMetagenomes(Dataset):
         norm_bin: str | None = None,
         threshold: float = 0.25,
         group_labels: dict | None = None,
-        width: int = 640,
-        height: int = 470,
+        width: int = 660,
+        height: int = 520,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -440,6 +440,7 @@ class ContrastMetagenomes(Dataset):
                 f"&#183; Fisher's exact p = {format_pvalue(result['pvalue'])}"
             ),
             y_title="Samples",
+            facet_groups=True,
             width=width,
             height=height,
             file_prefix=file_prefix,
