@@ -158,6 +158,17 @@ study.bin_abundance_heatmap(bins.index, file_prefix=script.output("figure"))
 It exposes `--datasets`, `--studies`, `--output-dir`, and one option per
 declared input, each defaulting to where that thing sits in a checkout.
 
+## Figure style
+
+Every plotting method draws with the template and colours in
+`gig_map_io.helpers.style`, so that figures from different methods read as one
+set. `TEMPLATE` (a light grid) and `SIMPLE_TEMPLATE` (axis lines only, for
+heatmaps and trees) layer the shared fonts and layout over plotly's own
+templates. `organism_colors` gives every organism a fixed colour by name, and
+`group_colors` colours the levels of a sample group in the order the study
+declares them, with the first level of a two-level group -- the case-like one
+-- in the warm colour. `save_image` exports PNGs at twice the layout size.
+
 ## Reproducibility
 
 Anything that subsamples takes a `random_state` and defaults to a fixed seed,

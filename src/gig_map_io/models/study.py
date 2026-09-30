@@ -18,9 +18,7 @@ from typing import Any, Dict, Iterable, List
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
 from plotly import graph_objects as go
-from plotly.subplots import make_subplots
 
 from .contrast_metagenomes import ContrastMetagenomes
 from .contrast_metagenomes_set import ContrastMetagenomesSet
@@ -29,7 +27,7 @@ from .pangenome_set import PangenomeSet
 from .phylogeny import PangenomePhylogeny
 from .phylogeny_set import PangenomePhylogenySet
 from .sample_group import SampleGroup
-from ..helpers.save_image import save_image
+from ..helpers.enrichment import ASSOCIATION_COLORS, plot_enrichment
 
 
 class Study:
@@ -268,10 +266,7 @@ class Study:
         """
         return {
             label: self.significant_bins(estimate_thresh, fdr_thresh, direction).index
-            for label, direction in [
-                ("Positively associated", "positive"),
-                ("Negatively associated", "negative"),
-            ]
+            for label, direction in zip(ASSOCIATION_COLORS, ["positive", "negative"])
         }
 
     # --- Enrichment among a set of bins ------------------------------------
@@ -406,7 +401,7 @@ class Study:
         if not isinstance(enrichment, pd.DataFrame):
             enrichment = self.organism_enrichment(enrichment)
 
-        return _enrichment_figure(
+        return plot_enrichment(
             enrichment,
             label="organism",
             axis_title="Organism",
@@ -424,7 +419,7 @@ class Study:
         qvalue_threshold: float = 0.2,
         max_terms: int = 20,
         width: int = 900,
-        height: int = 600,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -433,7 +428,8 @@ class Study:
 
         Takes the output of :meth:`annotation_enrichment`, a map of label to
         bins, or nothing at all (in which case the significant bins are split
-        by direction of effect).
+        by direction of effect). The height follows the number of terms shown
+        unless given.
         """
         if not isinstance(enrichment, pd.DataFrame):
             enrichment = self.annotation_enrichment(enrichment)
@@ -447,10 +443,10 @@ class Study:
             .sort_values(["pvalue", "term"])
             .head(max_terms)["term"]
         )
-        return _enrichment_figure(
+        return plot_enrichment(
             enrichment.loc[enrichment["term"].isin(keep)],
             label="term",
-            axis_title="Annotation Term",
+            axis_title="Annotation term",
             title=f"{self.label} - annotations among the associated bins",
             qvalue_threshold=qvalue_threshold,
             order=None,
@@ -494,9 +490,33 @@ class Study:
         return self.contrasts.volcano_plot(**kwargs)
 
     def bin_abundance_heatmap(self, features, **kwargs: Any) -> go.Figure:
+        """
+        The sample annotations named in ``annotation_cols`` are shown with the
+        display names and order the study's sample groups give them.
+        """
+        annotation_cols = kwargs.get("annotation_cols")
+        if isinstance(annotation_cols, dict):
+            labels, orders = {}, {}
+            for column, display in annotation_cols.items():
+                group_labels, group_order = self._metadata_group(column)
+                if group_labels:
+                    labels[display] = group_labels
+                if group_order:
+                    orders[display] = group_order
+            kwargs.setdefault("annotation_labels", labels)
+            kwargs.setdefault("annotation_orders", orders)
         return self.contrasts.bin_abundance_heatmap(features, **kwargs)
 
     def plot_bin_abundance(self, organism: str, bin: str, **kwargs: Any) -> go.Figure:
+        """
+        The metadata column used for ``color`` or ``facet_row`` is shown with
+        the display names and order the study's sample groups give it.
+        """
+        columns = {kwargs.get(key) for key in ("color", "facet_row", "facet_col")} - {None}
+        if len(columns) == 1:
+            labels, order = self._metadata_group(next(iter(columns)))
+            kwargs.setdefault("group_labels", labels)
+            kwargs.setdefault("group_order", order or None)
         return self.contrast(organism).plot_bin_abundance(bin, **kwargs)
 
     def bin_contingency(self, organism: str, bin: str, **kwargs: Any) -> dict:
@@ -505,21 +525,22 @@ class Study:
 
     def plot_bin_contingency(self, organism: str, bin: str, **kwargs: Any) -> go.Figure:
         kwargs.setdefault("metadata_col", self.parameter)
-        kwargs.setdefault("group_labels", self._metadata_labels(kwargs["metadata_col"]))
+        kwargs.setdefault("group_labels", self._metadata_group(kwargs["metadata_col"])[0])
         return self.contrast(organism).plot_bin_contingency(bin, **kwargs)
 
-    def _metadata_labels(self, metadata_col: str) -> Dict[str, str]:
+    def _metadata_group(self, metadata_col: str) -> tuple[Dict[str, str], List[str]]:
         """
-        Display names for the values of a metadata column, taken from whichever
-        sample group reads that column. Lets a figure say "BSI" where the
-        contrast says 1, without the analysis script repeating the mapping the
-        study definition already carries.
+        Display names for the values of a metadata column, and the order to
+        show them in, taken from whichever sample group reads that column.
+        Lets a figure say "BSI" where the contrast says 1, without the
+        analysis script repeating the mapping the study definition already
+        carries. Empty when no sample group labels the column.
         """
         for group in self.sample_groups.values():
             for source in group.sources:
                 if source.column == metadata_col and source.labels:
-                    return dict(source.labels)
-        return {}
+                    return dict(source.labels), list(group.order)
+        return {}, []
 
     def _compare(self, method: str, comparitor: "Study", kwargs: dict) -> go.Figure:
         kwargs.setdefault("self_label", self.label)
@@ -600,78 +621,3 @@ class Study:
             list(index), names=["pangenome", "bin"]
         ))
 
-
-def _enrichment_figure(
-    enrichment: pd.DataFrame,
-    label: str,
-    axis_title: str,
-    title: str,
-    qvalue_threshold: float,
-    order: List[str] | None,
-    width: int,
-    height: int,
-    file_prefix: str | None,
-) -> go.Figure:
-    """
-    Two panels sharing a category axis: how many bins of each category fell in
-    each group, and how enriched that is. Bars are grouped by the set the bins
-    came from, so the two directions of effect can be read against each other.
-
-    Odds ratios are shown on a log2 scale, which is symmetric about no
-    enrichment, and marked where they clear the q-value threshold. A category
-    with no bins at all in a group has nothing to say about enrichment, so no
-    bar is drawn for it; one whose bins are *all* in the foreground has an
-    infinite odds ratio and is drawn at the edge of the observed range.
-    """
-    df = enrichment.copy()
-    for column in ["odds_ratio", "qvalue", "n_foreground", "n_background"]:
-        df[column] = pd.to_numeric(df[column], errors="coerce")
-
-    log2_odds = np.log2(df["odds_ratio"].replace({0: np.nan, np.inf: np.nan}))
-    limit = float(np.nanmax(np.abs(log2_odds))) if log2_odds.notna().any() else 1.0
-
-    unbounded = np.isinf(df["odds_ratio"]) & (df["n_foreground"] > 0)
-    df["log2_odds_ratio"] = log2_odds.where(~unbounded, limit)
-    # Nothing observed means no evidence either way, rather than depletion
-    df.loc[df["n_foreground"] == 0, "log2_odds_ratio"] = np.nan
-    df["mark"] = np.where(df["qvalue"] < qvalue_threshold, "*", "")
-
-    category_orders = {"group": list(dict.fromkeys(enrichment["group"]))}
-    if order is not None:
-        category_orders[label] = order
-
-    hover = {"qvalue": ":.2e", "odds_ratio": ":.3g", "n_foreground": True, "n_background": True}
-    shared = dict(
-        data_frame=df, y=label, color="group", orientation="h", barmode="group",
-        template="plotly_white", hover_data=hover, category_orders=category_orders,
-    )
-
-    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.06)
-    for trace in px.bar(x="n_foreground", **shared).data:
-        fig.add_trace(trace, row=1, col=1)
-    for trace in px.bar(x="log2_odds_ratio", text="mark", **shared).data:
-        fig.add_trace(trace.update(showlegend=False, textposition="outside"), row=1, col=2)
-
-    fig.add_vline(x=0, line_dash="dot", line_color="grey", row=1, col=2)
-
-    # An empty panel is indistinguishable from a broken one, so say which it is
-    if df.empty or not (df["n_foreground"] > 0).any():
-        fig.add_annotation(
-            text="No bins met the significance threshold",
-            showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
-            font=dict(color="grey"),
-        )
-
-    fig.update_layout(
-        width=width,
-        height=height,
-        title=title,
-        template="plotly_white",
-        legend_title_text="",
-        legend=dict(orientation="h", y=-0.15),
-        xaxis=dict(title="Bins"),
-        xaxis2=dict(title=f"Log2 Odds Ratio (* q < {qvalue_threshold})"),
-        yaxis=dict(title=axis_title, automargin=True),
-    )
-    save_image(fig, file_prefix)
-    return fig

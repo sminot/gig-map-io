@@ -20,6 +20,7 @@ This library provides:
   comparisons, pangenome summaries, community ordination, and clustering.
 """
 
+from .helpers import style  # noqa: F401  registers the figure template
 from .models import (
     ContrastMetagenomesSet,
     ContrastMetagenomes,

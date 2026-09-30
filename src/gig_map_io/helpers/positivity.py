@@ -12,6 +12,7 @@ from plotly.subplots import make_subplots
 
 from .clustering import linkage_order
 from .save_image import save_image
+from .style import NEUTRAL, PRIMARY, QUALITATIVE, TEMPLATE, ZERO_LINE, group_colors
 
 
 def plot_feature_positivity(
@@ -23,6 +24,7 @@ def plot_feature_positivity(
     width: int = 800,
     file_prefix: str | None = None,
     legend_title: str | None = None,
+    group_order: list | None = None,
 ) -> go.Figure:
     """
     Bar plot of samples by number of features exceeding a positivity threshold.
@@ -49,6 +51,9 @@ def plot_feature_positivity(
         Figure height in pixels. Default: 500.
     width : int
         Figure width in pixels. Default: 800.
+    group_order : list, optional
+        The groups in display order, the first being the case-like one; sets
+        their colours.
 
     Returns
     -------
@@ -84,18 +89,21 @@ def plot_feature_positivity(
     y_label = "Fraction of samples" if normalize else "Number of samples"
     tick_vals = list(range(max_n + 1))
 
+    order = list(group_order) if group_order else sorted(groups.unique())
     bar_fig = px.bar(
         plot_df,
         x="n_features",
         y="n_samples",
         color="_group",
+        color_discrete_map=group_colors(order),
+        category_orders={"_group": order},
         barmode="group",
         labels={
-            "n_features": "Min. features above threshold",
+            "n_features": "Minimum number of bins detected",
             "n_samples": y_label,
             "_group": legend_title or grouping.name or "Group",
         },
-        template="plotly_white",
+        template=TEMPLATE,
     )
 
     # --- Odds ratio subplot (two-group case only) --------------------------
@@ -134,22 +142,29 @@ def plot_feature_positivity(
             fig.add_trace(trace, row=1, col=1)
 
         fig.add_trace(
-            go.Bar(x=or_df["n_features"], y=or_df["or"], name=or_label, showlegend=False),
+            go.Bar(
+                x=or_df["n_features"], y=or_df["or"], name=or_label, showlegend=False,
+                marker_color=NEUTRAL,
+            ),
             row=2, col=1,
         )
-        fig.add_hline(y=0, row=2, col=1, line_dash="dash", line_color="gray")
+        fig.add_hline(y=0, row=2, col=1, **ZERO_LINE)
 
         fig.update_layout(
             barmode="group",
-            template="plotly_white",
+            template=TEMPLATE,
             height=height,
             width=width,
-            legend_title_text=legend_title or grouping.name or "Group",
+            legend=dict(
+                title_text=legend_title or grouping.name or "Group",
+                orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom",
+            ),
+            margin=dict(t=60),
         )
         fig.update_yaxes(title_text=y_label, row=1, col=1)
-        fig.update_yaxes(title_text=f"Log2 Odds Ratio<br>({or_label})", row=2, col=1)
+        fig.update_yaxes(title_text=f"log2 odds ratio<br>({or_label})", row=2, col=1)
         fig.update_xaxes(
-            title_text="Min. features above threshold",
+            title_text="Minimum number of bins detected",
             tickmode="array",
             tickvals=tick_vals,
             row=2, col=1,
@@ -174,6 +189,7 @@ def plot_positivity_heatmap(
     file_prefix: str | None = None,
     show_sample_labels: bool = True,
     grouping_width: float = 0.2,
+    group_orders: dict[str, list] | None = None,
 ) -> go.Figure:
     """
     Clustered positivity heatmap with grouping annotations and per-feature OR bars.
@@ -206,6 +222,9 @@ def plot_positivity_heatmap(
     file_prefix : str or None
         If provided, saves the figure as .html, .pdf, and .png via
         ``save_image``. Default: None.
+    group_orders : dict, optional
+        For each grouping variable, its categories in display order, the
+        first being the case-like one; sets their colours.
 
     Returns
     -------
@@ -213,6 +232,7 @@ def plot_positivity_heatmap(
     """
     if isinstance(grouping, pd.Series):
         grouping = grouping.to_frame()
+    group_orders = group_orders or {}
 
     shared_idx = rpkm.index.intersection(grouping.index)
     pos = (rpkm.loc[shared_idx] >= threshold).astype(int)
@@ -228,15 +248,20 @@ def plot_positivity_heatmap(
     sample_labels = [str(s) for s in pos_sorted.index]
     feature_labels = [str(f) for f in pos_sorted.columns]
 
-    qualitative = px.colors.qualitative.Plotly
-
     # Shared colour map: var_name → {category → colour}
     # Built once so OR bars and grouping heatmap use identical colours.
+    def _categories(var_name: str) -> list:
+        present = set(meta[var_name].dropna().unique())
+        if var_name in group_orders:
+            return [cat for cat in group_orders[var_name] if cat in present]
+        return sorted(present)
+
     cat_colors: dict[str, dict] = {
-        var_name: {
-            cat: qualitative[i % len(qualitative)]
-            for i, cat in enumerate(sorted(meta[var_name].dropna().unique()))
-        }
+        var_name: (
+            {cat: color for cat, color in group_colors(group_orders[var_name]).items()}
+            if var_name in group_orders
+            else {cat: QUALITATIVE[i % len(QUALITATIVE)] for i, cat in enumerate(_categories(var_name))}
+        )
         for var_name in meta.columns
     }
 
@@ -269,12 +294,11 @@ def plot_positivity_heatmap(
         or_traces.append(go.Bar(
             x=feature_labels,
             y=best_log2_ors,
-            name=f"{var_name}: {best_cat}",
+            name=f"{best_cat} vs. rest",
             marker_color=cat_colors[var_name][best_cat],
             marker_opacity=0.7,
-            legendgroup=f"or_{var_name}",
-            legendgrouptitle_text="Category",
-            legend="legend2",
+            legendgroup="odds_ratio",
+            legendgrouptitle_text="log2 odds ratio",
             showlegend=True,
         ))
 
@@ -308,9 +332,10 @@ def plot_positivity_heatmap(
             z=pos_sorted.values,
             x=feature_labels,
             y=sample_labels,
-            colorscale=[[0, "white"], [1, "steelblue"]],
+            colorscale=[[0, "white"], [1, PRIMARY]],
             showscale=False,
             zmin=0, zmax=1,
+            xgap=1, ygap=1,
         ),
         row=2, col=1,
     )
@@ -320,7 +345,7 @@ def plot_positivity_heatmap(
 
     for var_name in meta.columns:
         col_data = meta_sorted[var_name]
-        unique_cats = sorted(col_data.dropna().unique())
+        unique_cats = _categories(var_name)
         N = len(unique_cats)
         colors = [cat_colors[var_name][cat] for cat in unique_cats]
 
@@ -360,24 +385,21 @@ def plot_positivity_heatmap(
     # --- Link shared axes and finalize -------------------------------------
     fig.update_layout(
         barmode='overlay',
-        template='plotly_white',
+        template=TEMPLATE,
         height=height,
         width=width,
         # Samples: link grouping annotation y-axis to main heatmap y-axis
         yaxis3=dict(matches='y2', showticklabels=False),
         # Features: link OR bar x-axis to main heatmap x-axis
         xaxis=dict(matches='x2', showticklabels=False),
-        # OR legend aligned with the barplot row (top ~20% of figure)
-        legend2=dict(
-            x=1.0,
-            y=0.9,
-            xanchor='left',
-            yanchor='middle',
-        ),
+        legend=dict(x=1.02, y=1.0, xanchor='left', yanchor='top'),
+        margin=dict(t=40, b=150),
     )
-    fig.update_xaxes(showticklabels=True, tickangle=45, row=2, col=1)
-    fig.update_yaxes(showticklabels=show_sample_labels, row=2, col=1)
-    fig.update_yaxes(title_text="Odds Ratio (Log2)", row=1, col=1)
+    fig.update_xaxes(showticklabels=True, tickangle=-90, row=2, col=1)
+    fig.update_yaxes(showticklabels=show_sample_labels, title_text="Samples", row=2, col=1)
+    fig.update_yaxes(title_text="log2 odds ratio", row=1, col=1)
+    fig.update_xaxes(showgrid=False, row=2, col=2)
+    fig.update_yaxes(showgrid=False, row=2, col=2)
 
     save_image(fig, file_prefix)
 

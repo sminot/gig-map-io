@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 from typing import Dict, List
 
 from .save_image import save_image
+from .style import SIMPLE_TEMPLATE
 
 
 class Phylogeny:
@@ -115,7 +116,7 @@ class Phylogeny:
         self.plot_lines(fig)
         self.plot_points(fig, mode="markers+text")
         fig.update_layout(
-            template="simple_white",
+            template=SIMPLE_TEMPLATE,
             yaxis=dict(
                 visible=False,
                 showticklabels=False,
@@ -124,7 +125,7 @@ class Phylogeny:
             ),
             xaxis=dict(
                 automargin=True,
-                title_text="SNP Rate"
+                title_text="SNP rate"
             ),
             margin=dict(l=100, r=400, b=100, t=100),
             title_text=self.name,
@@ -150,7 +151,7 @@ class Phylogeny:
                         ],
                         mode="lines",
                         showlegend=False,
-                        line_color="black"
+                        line=dict(color="black", width=1)
                     ),
                     row=row,
                     col=col
@@ -166,7 +167,7 @@ class Phylogeny:
                 mode=mode,
                 showlegend=False,
                 textposition="middle right",
-                marker_color="black",
+                marker=dict(color="black", size=4),
                 cliponaxis=False
             ),
             row=row,
@@ -193,7 +194,7 @@ class Phylogeny:
                     ],
                     mode="lines",
                     showlegend=False,
-                    line=dict(dash='dot', color="gray"),
+                    line=dict(dash='dot', color="#b0b0b0", width=1),
                     cliponaxis=False
                 ),
                 row=row,
@@ -343,7 +344,7 @@ class Phylogeny:
                     y=[self.coords[node_name]['y'], comp.coords[node_name]['y'] + y_offset],
                     mode="lines",
                     showlegend=False,
-                    line=dict(dash='dot', color="gray"),
+                    line=dict(dash='dot', color="#b0b0b0", width=1),
                     cliponaxis=False
                 ),
                 row=1,
@@ -358,21 +359,22 @@ class Phylogeny:
         )
 
         fig.update_layout(
-            template="simple_white",
+            template=SIMPLE_TEMPLATE,
             yaxis=blank_axis,
             yaxis2=blank_axis,
             yaxis3=blank_axis,
             xaxis=dict(
                 automargin=True,
-                title_text="SNP Rate"
+                title_text="SNP rate"
             ),
             xaxis2=blank_axis,
             xaxis3=dict(
                 automargin=True,
-                title_text="SNP Rate",
+                title_text="SNP rate",
                 autorange="reversed"
             ),
-            margin=dict(l=100, r=400, b=100, t=100),
+            # Leaves are drawn as points, not labels, so no label margin
+            margin=dict(l=50, r=30, b=70, t=60),
             height=height,
             width=width
         )

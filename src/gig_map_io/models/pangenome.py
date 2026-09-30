@@ -19,6 +19,7 @@ from plotly.subplots import make_subplots
 
 from ..helpers.sort_dataframe import sort_dataframe
 from ..helpers.save_image import save_image
+from ..helpers.style import PRIMARY, SIMPLE_TEMPLATE, TEMPLATE
 from ..helpers.coords import Coords
 from .dataset import Dataset
 from ..helpers.phylogeny import Phylogeny
@@ -240,7 +241,8 @@ class Pangenome(Dataset):
             layout=go.Layout(
                 xaxis_title="Gene",
                 yaxis_title="Genome",
-                template="simple_white",
+                margin=dict(r=20),
+                template=SIMPLE_TEMPLATE,
                 width=width,
                 height=height
             )
@@ -374,15 +376,16 @@ class Pangenome(Dataset):
             data_frame=df,
             x="membership_bins",
             y="distance_log10",
-            template="plotly_white",
+            template=TEMPLATE,
             labels=dict(
-                distance_log10="Mean Distance (bp)",
-                membership_bins="Genome Membership<br>(Jaccard Similarity)"
+                distance_log10="Mean distance between genes (bp)",
+                membership_bins="Genome membership (Jaccard similarity)"
             ),
             width=width,
             height=height,
             **kwargs
         )
+        fig.update_traces(marker=dict(size=4, opacity=0.6), line_width=1)
         fig.update_yaxes(
             tickmode='array',
             tickvals=[0, 1, 2, 3, 4, 5, 6],
@@ -437,10 +440,10 @@ class Pangenome(Dataset):
             x="bin_size",
             y="count",
             labels=dict(
-                bin_size="Pangenome Bin Size (# of Genes)",
-                count="Total Gene Content"
+                bin_size="Pangenome bin size (genes)",
+                count="Total gene content (genes)"
             ),
-            template="plotly_white",
+            template=TEMPLATE,
             hover_name="bin_names",
             width=width,
             height=height
@@ -512,41 +515,42 @@ class Pangenome(Dataset):
                     x=rf["n_genomes"],
                     y=rf["50%"],
                     mode="lines",
-                    line=dict(color='rgb(31, 119, 180)'),
+                    line=dict(color=PRIMARY, width=2),
                     showlegend=False
                 ),
                 go.Scatter(
                     x=rf['n_genomes'],
                     y=rf['75%'],
                     mode='lines',
-                    marker=dict(color="#444"),
+                    marker=dict(color=PRIMARY),
                     line=dict(width=0),
                     showlegend=False
                 ),
                 go.Scatter(
                     x=rf['n_genomes'],
                     y=rf['25%'],
-                    marker=dict(color="#444"),
+                    marker=dict(color=PRIMARY),
                     line=dict(width=0),
                     mode='lines',
-                    fillcolor='rgba(68, 68, 68, 0.3)',
+                    fillcolor='rgba(44, 111, 187, 0.25)',
                     fill='tonexty',
                     showlegend=False
                 )
             ],
             layout=go.Layout(
-                xaxis_title="Number of Genomes",
-                yaxis_title="Number of Genes",
+                xaxis_title="Number of genomes",
+                yaxis_title="Number of genes",
                 yaxis_range=[0, None],
-                template="plotly_white",
+                template=TEMPLATE,
                 width=width,
                 height=height
             )
         )
 
-        # Make the x axis log scale
+        # Make the x axis log scale, ticked at the decades only
         fig.update_xaxes(
-            type="log"
+            type="log",
+            dtick=1
         )
 
         # If save_image was provided, use the string as the file
@@ -720,7 +724,7 @@ class Pangenome(Dataset):
         bins: str | List[str],
         width: int = 500,
         height: int = 400,
-        title: str = "Bin Presence Heatmap",
+        title: str = "Bin presence by genome",
         show_ani_tree: bool = True,
         show_genome_names: bool = False,
         tree_proportion: float = 0.5,
@@ -773,6 +777,7 @@ class Pangenome(Dataset):
         if show_ani_tree:
             left_tree.plot_lines(fig, row=1, col=1)
             left_tree.plot_points(fig, mode="markers", row=1, col=1)
+            fig.update_xaxes(title_text="ANI distance", row=1, col=1)
 
         fig.add_heatmap(
             z=df.values,
@@ -787,8 +792,9 @@ class Pangenome(Dataset):
         fig.update_layout(
             height=height,
             width=width,
-            template="simple_white",
-            title=dict(text=title, x=0.5, xanchor="center")
+            template=SIMPLE_TEMPLATE,
+            title=dict(text=title, x=0.5, xanchor="center"),
+            margin=dict(r=20),
         )
         if show_genome_names:
             fig.update_yaxes(

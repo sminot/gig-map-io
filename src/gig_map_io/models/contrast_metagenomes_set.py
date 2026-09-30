@@ -18,8 +18,13 @@ from gig_map_io.helpers.make_lines import make_lines
 from gig_map_io.helpers.save_image import save_image
 from gig_map_io.helpers.format_pvalue import format_pvalue
 from gig_map_io.helpers.observed_expected import plot_observed_expected
+from gig_map_io.helpers.style import (
+    DENSE_MARKER_OPACITY, QUALITATIVE, TEMPLATE, THRESHOLD_LINE, ZERO_LINE,
+    group_colors, organism_colors,
+)
 from .contrast_metagenomes import ContrastMetagenomes
 from .dataset_dict import DatasetDict
+from .sample_group import _key as _label_key
 
 logger = getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -140,10 +145,10 @@ class ContrastMetagenomesSet(DatasetDict):
         estimate_thresh: float = 0.25,
         fdr_thresh: float = 0.2,
         max_abs_estimate: float = 5.0,
-        width: int = 500,
-        height: int = 400,
+        width: int = 650,
+        height: int = 450,
         file_prefix: str | None = None,
-        xlabel: str = "Effect Size",
+        xlabel: str = "Effect size",
         transpose: bool = False,
         **kwargs
     ) -> go.Figure:
@@ -173,17 +178,18 @@ class ContrastMetagenomesSet(DatasetDict):
             y=_coords["y"],
             hover_name="hover_name",
             color="pangenome",
-            template="plotly_white",
+            color_discrete_map=organism_colors(self.pangenome_names),
+            template=TEMPLATE,
             labels=dict(
-                Estimate_clipped="Effect Size (Clipped)",
-                Estimate="Effect Size",
+                Estimate_clipped="Effect size (clipped)",
+                Estimate="Effect size",
                 neg_log10_qvalue="-log10(q-value)",
                 neg_log10_pvalue="-log10(p-value)",
                 signed_log10_qvalue="Signed -log10(q-value)",
                 signed_log10_pvalue="Signed -log10(p-value)",
-                feature="Pangenome Bin",
-                mean_abund="Mean Abundance (RPKM)",
-                pangenome="Pangenome",
+                feature="Pangenome bin",
+                mean_abund="Mean abundance (RPKM)",
+                pangenome="Organism",
                 qvalue="q-value",
                 pvalue="p-value",
             ),
@@ -192,15 +198,16 @@ class ContrastMetagenomesSet(DatasetDict):
             height=height,
             **kwargs
         )
-        make_lines(0, "black", fig)
-        make_lines(estimate_thresh, "red", fig, hline=False)
-        make_lines(-np.log10(fdr_thresh), "red", fig, vline=False, neg=False)
+        fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, line_width=0))
+        make_lines(0, fig, **ZERO_LINE)
+        make_lines(estimate_thresh, fig, hline=False, **THRESHOLD_LINE)
+        make_lines(-np.log10(fdr_thresh), fig, vline=False, neg=False, **THRESHOLD_LINE)
 
         # Specify the x-axis title
-        fig.update_xaxes(title_text=xlabel)
-
-        # Center the title
-        fig.update_layout(title_x=0.5)
+        if not transpose:
+            fig.update_xaxes(title_text=xlabel)
+        else:
+            fig.update_yaxes(title_text=xlabel)
 
         # If save_image was provided, use the string as the file
         # prefix to write out HTML, PDF, PNG, and JSON
@@ -212,6 +219,8 @@ class ContrastMetagenomesSet(DatasetDict):
         self,
         features: pd.MultiIndex,
         annotation_cols: list[str] | dict[str, str] | None = None,
+        annotation_labels: dict[str, dict] | None = None,
+        annotation_orders: dict[str, list] | None = None,
         metadata: pd.DataFrame | None = None,
         log_transform: bool = True,
         width: int = 1000,
@@ -240,6 +249,13 @@ class ContrastMetagenomesSet(DatasetDict):
             Columns from self.metadata (or the provided `metadata`) to display as
             sample annotations. If a dict, keys are original column names and values
             are display labels. If None, no annotation heatmap is shown.
+        annotation_labels : dict, optional
+            Display names for the values of an annotation column, keyed by
+            the column's display label: ``{"GvHD": {"1": "Case", "0": "Control"}}``.
+        annotation_orders : dict, optional
+            Order of the (display) values of an annotation column, keyed the
+            same way. A two-level column is coloured as a contrast, with the
+            first level the case-like one.
         metadata : pd.DataFrame, optional
             Sample-level metadata. Overrides self.metadata when provided. Index
             must match specimen names; each column becomes a column in the annotation
@@ -321,9 +337,15 @@ class ContrastMetagenomesSet(DatasetDict):
                 metadata = metadata.reindex(columns=list(annotation_cols.keys())).rename(columns=annotation_cols)
             else:
                 metadata = metadata.reindex(columns=annotation_cols)
+            for col, labels in (annotation_labels or {}).items():
+                labels = {_label_key(k): v for k, v in labels.items()}
+                metadata[col] = metadata[col].map(
+                    lambda v: labels.get(_label_key(v), v) if pd.notnull(v) else v
+                )
         else:
             metadata = None
         has_annotations = metadata is not None and not metadata.empty
+        annotation_orders = annotation_orders or {}
 
         # For each annotation column, determine if it is categorical (< 12 unique values).
         # ann_cat_info maps col -> (ordered unique values, list of hex colors).
@@ -335,7 +357,12 @@ class ContrastMetagenomesSet(DatasetDict):
                 n_unique = s.nunique(dropna=True)
                 if (not pd.api.types.is_numeric_dtype(s)) or n_unique < 12:
                     unique_vals = sorted(s.dropna().unique().tolist(), key=str)
-                    colors = px.colors.qualitative.Dark24[:len(unique_vals)]
+                    if col in annotation_orders:
+                        unique_vals = [v for v in annotation_orders[col] if v in unique_vals]
+                        palette = group_colors(annotation_orders[col])
+                        colors = [palette[v] for v in unique_vals]
+                    else:
+                        colors = QUALITATIVE[:len(unique_vals)]
                     ann_cat_info[col] = (unique_vals, colors)
 
         # ── 6. Build subplot layout ───────────────────────────────────────────
@@ -392,6 +419,7 @@ class ContrastMetagenomesSet(DatasetDict):
                     yanchor="top",
                     y=1.0,
                     x=1.02,
+                    thickness=14,
                 ),
             ),
             row=1, col=rpkm_col,
@@ -412,6 +440,7 @@ class ContrastMetagenomesSet(DatasetDict):
                     yanchor="bottom",
                     y=0.0,
                     x=1.02,
+                    thickness=14,
                 ),
             ),
             row=2, col=rpkm_col,
@@ -476,22 +505,22 @@ class ContrastMetagenomesSet(DatasetDict):
 
         # ── 8. Update layout ──────────────────────────────────────────────────
         has_cat_annotations = has_annotations and bool(ann_cat_info)
+        # The categorical legend runs along the top, leaving the right margin
+        # to the two colour bars
         fig.update_layout(
             width=width,
             height=height,
-            template="plotly_white",
+            template=TEMPLATE,
             showlegend=has_cat_annotations,
             legend=dict(
-                x=1.35,
-                y=1.0 - rpkm_height_fraction / 2,
-                yanchor="middle",
-                xanchor="left",
+                orientation="h", x=0.0, xanchor="left", y=1.0, yanchor="bottom",
             ),
+            margin=dict(t=50),
         )
 
         fig.update_yaxes(title_text="Samples", row=1, col=1 if has_annotations else rpkm_col)
-        fig.update_yaxes(title_text="Feature", row=2, col=rpkm_col)
-        fig.update_xaxes(title_text="Feature", row=2, col=rpkm_col)
+        fig.update_yaxes(title_text="Pangenome bin", row=2, col=rpkm_col)
+        fig.update_xaxes(title_text="Pangenome bin", row=2, col=rpkm_col)
 
         # Hide x-tick labels on the top row (shared axis shows them at bottom)
         fig.update_xaxes(showticklabels=False, row=1, col=rpkm_col)
@@ -658,8 +687,8 @@ class ContrastMetagenomesSet(DatasetDict):
         comparitor_label: str = "comparitor",
         fdr: bool = True,
         sig_thresh: float = 0.2,
-        width: int = 500,
-        height: int = 400,
+        width: int = 650,
+        height: int = 450,
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
@@ -680,24 +709,26 @@ class ContrastMetagenomesSet(DatasetDict):
             x=f"{value_col}_self",
             y=f"{value_col}_comparitor",
             color="pangenome",
+            color_discrete_map=organism_colors(self.pangenome_names),
             hover_name="hover_name",
-            template="plotly_white",
+            template=TEMPLATE,
             labels={
-                f"{value_col}_self": f"{value_label} ({self_label})",
-                f"{value_col}_comparitor": f"{value_label} ({comparitor_label})",
+                f"{value_col}_self": f"{value_label}<br>{self_label}",
+                f"{value_col}_comparitor": f"{value_label}<br>{comparitor_label}",
                 "pvalue_self": f"p-value ({self_label})",
                 "pvalue_comparitor": f"p-value ({comparitor_label})",
-                "feature": "Pangenome Bin",
-                "pangenome": "Pangenome",
+                "feature": "Pangenome bin",
+                "pangenome": "Organism",
             },
             hover_data=[f"{value_col}_self", f"{value_col}_comparitor", "pvalue_self", "pvalue_comparitor"],
             width=width,
             height=height,
             **kwargs
         )
+        fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, line_width=0))
 
-        make_lines(0, "black", fig)
-        make_lines(-np.log10(sig_thresh), "red", fig)
+        make_lines(0, fig, **ZERO_LINE)
+        make_lines(-np.log10(sig_thresh), fig, **THRESHOLD_LINE)
 
         save_image(fig, file_prefix)
 
@@ -711,8 +742,8 @@ class ContrastMetagenomesSet(DatasetDict):
         fdr: bool = True,
         sig_thresh: float = 0.2,
         estimate_thresh: float = 0.25,
-        width: int = 500,
-        height: int = 400,
+        width: int = 650,
+        height: int = 450,
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
@@ -739,25 +770,27 @@ class ContrastMetagenomesSet(DatasetDict):
             x="Estimate_self",
             y="Estimate_comparitor",
             color="pangenome",
+            color_discrete_map=organism_colors(self.pangenome_names),
             hover_name="hover_name",
-            template="plotly_white",
+            template=TEMPLATE,
             labels={
-                "Estimate_self": f"Estimate ({self_label})",
-                "Estimate_comparitor": f"Estimate ({comparitor_label})",
+                "Estimate_self": f"Effect size<br>{self_label}",
+                "Estimate_comparitor": f"Effect size<br>{comparitor_label}",
                 "pvalue_self": f"p-value ({self_label})",
                 "pvalue_comparitor": f"p-value ({comparitor_label})",
                 "qvalue_self": f"q-value ({self_label})",
                 "qvalue_comparitor": f"q-value ({comparitor_label})",
-                "pangenome": "Pangenome",
-                "feature": "Pangenome Bin",
+                "pangenome": "Organism",
+                "feature": "Pangenome bin",
             },
             hover_data=["Estimate_self", "Estimate_comparitor", "pvalue_self", "pvalue_comparitor", "qvalue_self", "qvalue_comparitor"],
             width=width,
             height=height,
             **kwargs
         )
+        fig.update_traces(marker=dict(size=8, opacity=0.85, line_width=0))
 
-        make_lines(0, "black", fig)
+        make_lines(0, fig, **ZERO_LINE)
 
         save_image(fig, file_prefix)
 
@@ -772,69 +805,75 @@ class ContrastMetagenomesSet(DatasetDict):
         sig_thresh: float = 0.2,
         estimate_thresh: float = 0.25,
         max_abs_estimate: float = 2.5,
-        width: int = 600,
-        height: int = 600,
+        width: int = 720,
+        height: int = 720,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
-        Multi-panel figure combining the volcano plot for each contrast set with the association scatter plot.
-        """
+        The volcano plot of each contrast set as a margin of the effect-size
+        scatter of the bins significant in both.
 
-        # Make a multi-panel figure combining the volcano plot for each contrast set with the association scatter plot.
+        The comparitor's volcano is drawn on its side at the upper left, so
+        that its effect-size axis runs alongside the scatter's vertical axis;
+        this set's volcano sits below the scatter, sharing its horizontal
+        axis. The legend takes the otherwise empty lower-left quadrant.
+        """
+        sig_label = "q-value" if fdr else "p-value"
         fig = make_subplots(
             rows=2,
             cols=2,
-            shared_xaxes=True,
-            shared_yaxes=True,
-            horizontal_spacing=0.06,
-            vertical_spacing=0.06
+            horizontal_spacing=0.10,
+            vertical_spacing=0.10,
+            subplot_titles=(comparitor_label, "Significant in both", None, self_label),
         )
-        fig.add_traces(
-            self.volcano_plot(
-                estimate_thresh=estimate_thresh,
-                fdr_thresh=sig_thresh,
-                max_abs_estimate=max_abs_estimate,
-            ).data,
-            rows=2,
-            cols=2
-        )
-        fig.add_traces(
-            comparitor.volcano_plot(
-                estimate_thresh=estimate_thresh,
-                fdr_thresh=sig_thresh,
-                max_abs_estimate=max_abs_estimate,
-                transpose=True
-            ).data,
-            rows=1,
-            cols=1
-        )
-        fig.add_traces(
-            self.compare_association_scatter(
-                comparitor=comparitor,
-                fdr=fdr,
-                sig_thresh=sig_thresh,
-            ).data,
-            rows=1,
-            cols=2
-        )
+        # The legend is drawn from this set's volcano, which shows every
+        # organism; the other panels repeat the same names
+        for trace in self.volcano_plot(
+            estimate_thresh=estimate_thresh,
+            fdr_thresh=sig_thresh,
+            max_abs_estimate=max_abs_estimate,
+        ).data:
+            fig.add_trace(trace.update(showlegend=True, legendgroup=trace.name), row=2, col=2)
+        for trace in comparitor.volcano_plot(
+            estimate_thresh=estimate_thresh,
+            fdr_thresh=sig_thresh,
+            max_abs_estimate=max_abs_estimate,
+            transpose=True,
+        ).data:
+            fig.add_trace(trace.update(showlegend=False, legendgroup=trace.name), row=1, col=1)
+        for trace in self.compare_association_scatter(
+            comparitor=comparitor,
+            fdr=fdr,
+            sig_thresh=sig_thresh,
+            estimate_thresh=estimate_thresh,
+        ).data:
+            fig.add_trace(trace.update(showlegend=False, legendgroup=trace.name), row=1, col=2)
+
+        # Linked rather than shared, so every panel keeps its own tick labels
+        fig.update_yaxes(matches="y", row=1, col=2)
+        fig.update_xaxes(matches="x4", row=1, col=2)
+
+        make_lines(0, fig, vline=False, row=1, col=1, **ZERO_LINE)
+        make_lines(estimate_thresh, fig, vline=False, row=1, col=1, **THRESHOLD_LINE)
+        make_lines(-np.log10(sig_thresh), fig, hline=False, neg=False, row=1, col=1, **THRESHOLD_LINE)
+        make_lines(0, fig, row=1, col=2, **ZERO_LINE)
+        make_lines(0, fig, hline=False, row=2, col=2, **ZERO_LINE)
+        make_lines(estimate_thresh, fig, hline=False, row=2, col=2, **THRESHOLD_LINE)
+        make_lines(-np.log10(sig_thresh), fig, vline=False, neg=False, row=2, col=2, **THRESHOLD_LINE)
+
         fig.update_layout(
             width=width,
             height=height,
-            template="plotly_white",
-            showlegend=False,
+            template=TEMPLATE,
+            legend=dict(
+                title_text="Organism", x=0.0, y=0.42, xanchor="left", yanchor="top",
+            ),
+            margin=dict(t=50),
         )
-
-        make_lines(0, "black", fig)
-        make_lines(estimate_thresh, "red", fig, hline=False, row=2, col=2)
-        make_lines(estimate_thresh, "red", fig, vline=False, row=1, col=1)
-        make_lines(estimate_thresh, "red", fig, row=2, col=2)
-        make_lines(-np.log10(sig_thresh), "red", fig, vline=False, neg=False, row=2, col=2)
-        make_lines(-np.log10(sig_thresh), "red", fig, hline=False, neg=False, row=1, col=1)
-
-        sig_label = "q-value" if fdr else "p-value"
         fig.update_xaxes(title_text=f"-log10({sig_label})", row=1, col=1)
-        fig.update_yaxes(title_text=f"Estimate ({comparitor_label})", row=1, col=1)
-        fig.update_xaxes(title_text=f"Estimate ({self_label})", row=2, col=2)
+        fig.update_yaxes(title_text=f"Effect size, {comparitor_label}", row=1, col=1)
+        fig.update_yaxes(title_text=f"Effect size, {comparitor_label}", row=1, col=2)
+        fig.update_xaxes(title_text=f"Effect size, {self_label}", row=2, col=2)
         fig.update_yaxes(title_text=f"-log10({sig_label})", row=2, col=2)
 
         save_image(fig, file_prefix)

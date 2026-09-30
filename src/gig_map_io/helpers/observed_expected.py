@@ -20,6 +20,7 @@ from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 
 from .save_image import save_image
+from .style import TEMPLATE
 
 OBSERVED_COLOR = "#2c6fbb"
 EXPECTED_COLOR = "#c3cedb"
@@ -126,7 +127,7 @@ def plot_observed_expected(
         )
 
     fig.update_layout(
-        barmode="group", bargap=0.32, bargroupgap=0.05, template="plotly_white",
+        barmode="group", bargap=0.32, bargroupgap=0.05, template=TEMPLATE,
         width=width, height=height,
         title=dict(text=f"{title}<br><sub>{subtitle}</sub>", x=0.5),
         legend=dict(orientation="h", y=1.0, x=0.5, xanchor="center", yanchor="bottom"),
@@ -264,7 +265,7 @@ def _plot_faceted(
         )
 
     fig.update_layout(
-        barmode="group", bargap=0.42, bargroupgap=0.05, template="plotly_white",
+        barmode="group", bargap=0.42, bargroupgap=0.05, template=TEMPLATE,
         width=width, height=height,
         title=dict(text=f"{title}<br><sub>{subtitle}</sub>", x=0.5),
         legend=dict(orientation="h", y=1.0, x=0.5, xanchor="center", yanchor="bottom"),

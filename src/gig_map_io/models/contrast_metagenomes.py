@@ -17,6 +17,9 @@ from ..helpers.observed_expected import plot_observed_expected
 from .sample_group import _key as _label_key
 from ..helpers.make_lines import make_lines
 from ..helpers.save_image import save_image
+from ..helpers.style import (
+    DENSE_MARKER_OPACITY, PRIMARY, TEMPLATE, THRESHOLD_LINE, ZERO_LINE, group_colors,
+)
 
 
 class ContrastMetagenomes(Dataset):
@@ -287,8 +290,8 @@ class ContrastMetagenomes(Dataset):
         estimate_thresh: float = 0.25,
         fdr_thresh: float = 0.2,
         max_abs_estimate: float = 5.0,
-        width: int = 500,
-        height: int = 400,
+        width: int = 560,
+        height: int = 450,
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
@@ -306,23 +309,26 @@ class ContrastMetagenomes(Dataset):
             y="neg_log10_qvalue",
             hover_data=df.columns.values,
             hover_name="feature",
-            template="plotly_white",
+            template=TEMPLATE,
             labels=dict(
-                Estimate_clipped="Effect Size",
+                Estimate_clipped="Effect size",
                 neg_log10_qvalue="-log10(q-value)",
-                feature="Pangenome Bin",
-                mean_abund="Mean Abundance (RPKM)",
+                feature="Pangenome bin",
+                mean_abund="Mean abundance (RPKM)",
                 qvalue="q-value",
                 pvalue="p-value",
             ),
             size="mean_abund",
+            size_max=14,
+            color_discrete_sequence=[PRIMARY],
             width=width,
             height=height,
             **kwargs
         )
-        make_lines(0, "black", fig)
-        make_lines(estimate_thresh, "red", fig, hline=False)
-        make_lines(-np.log10(fdr_thresh), "red", fig, vline=False, neg=False)
+        fig.update_traces(marker=dict(opacity=DENSE_MARKER_OPACITY, line_width=0))
+        make_lines(0, fig, **ZERO_LINE)
+        make_lines(estimate_thresh, fig, hline=False, **THRESHOLD_LINE)
+        make_lines(-np.log10(fdr_thresh), fig, vline=False, neg=False, **THRESHOLD_LINE)
 
         # If save_image was provided, use the string as the file
         # prefix to write out HTML, PDF, PNG, and JSON
@@ -450,6 +456,8 @@ class ContrastMetagenomes(Dataset):
         self,
         bin: str,
         norm_bin: str | None = None,
+        group_labels: dict | None = None,
+        group_order: list | None = None,
         width: int = 500,
         height: int = 400,
         file_prefix: str | None = None,
@@ -457,6 +465,10 @@ class ContrastMetagenomes(Dataset):
     ) -> go.Figure:
         """
         Plot the abundance of a bin.
+
+        ``group_labels`` renames the values of the metadata column used for
+        ``color`` / ``facet_row`` (say 1 to "BSI"), and ``group_order`` gives
+        the order of those display names, the first being the case-like one.
         """
         assert bin in self.rpkm.columns, f"{bin} not found in rpkm.csv.gz"
 
@@ -468,19 +480,27 @@ class ContrastMetagenomes(Dataset):
                 else self.rpkm.loc[:, bin] / self.rpkm.loc[:, norm_bin]
             )
         )
+        labels = {_label_key(k): v for k, v in (group_labels or {}).items()}
+        grouping = {kwargs.get(key) for key in ("color", "facet_row", "facet_col")} - {None}
+        for column in grouping:
+            df[column] = df[column].map(lambda v: labels.get(_label_key(v), v))
+        if group_order is not None:
+            kwargs.setdefault("category_orders", {column: list(group_order) for column in grouping})
+            kwargs.setdefault("color_discrete_map", group_colors(group_order))
 
         fig = px.histogram(
             data_frame=df,
             x="abundance",
-            template="plotly_white",
+            template=TEMPLATE,
             width=width,
             height=height,
             **kwargs
         )
         fig.update_yaxes(
-            title_text=f"{kwargs.get('histnorm', 'number').title()} of Samples",
+            title_text=f"{kwargs.get('histnorm', 'number').title()} of samples",
             col=1
         )
+        fig.for_each_annotation(lambda a: a.update(text=a.text.split("=", 1)[-1]))
 
         # Faceting repeats the x-axis title once per column, which collides for
         # any label of a reasonable length. One centred caption instead.

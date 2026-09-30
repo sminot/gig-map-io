@@ -23,6 +23,10 @@ from ..helpers.ordination import tsne
 from ..helpers.permanova import permanova
 from ..helpers.positivity import plot_feature_positivity, plot_positivity_heatmap
 from ..helpers.save_image import save_image
+from ..helpers.style import (
+    DENSE_MARKER_OPACITY, LARGE_QUALITATIVE, NEUTRAL, PRIMARY, TEMPLATE, THRESHOLD_LINE,
+    group_colors,
+)
 from ..helpers.supervised import fit_classifier
 from .study import Study
 
@@ -147,29 +151,39 @@ class StudySet:
         self,
         color: str,
         features: pd.MultiIndex | pd.DataFrame | None = None,
-        width: int = 550,
-        height: int = 400,
+        width: int = 600,
+        height: int = 450,
         show_legend: bool = True,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
         t-SNE ordination of the combined samples, colored by a sample group.
+
+        The levels of a group are coloured in the order the studies declare
+        them, so that a group shared between figures is coloured alike; a
+        group with more levels than the palette (participants) is not given
+        a legend.
         """
         coords = tsne(self.features(features)).merge(
             self.sample_metadata, left_index=True, right_index=True
         )
+        order = self._order(color)
         fig = px.scatter(
             data_frame=coords,
             x="t-SNE 1",
             y="t-SNE 2",
             color=color,
-            template="plotly_white",
+            color_discrete_map=group_colors(order) if order else None,
+            color_discrete_sequence=None if order else LARGE_QUALITATIVE,
+            category_orders={color: order} if order else None,
+            template=TEMPLATE,
             width=width,
             height=height,
             labels={"study": "Study", "disease": "Disease", "participant": "Participant"},
         )
-        fig.update_xaxes(showticklabels=False)
-        fig.update_yaxes(showticklabels=False)
+        fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, line_width=0))
+        fig.update_xaxes(showticklabels=False, ticks="")
+        fig.update_yaxes(showticklabels=False, ticks="")
         fig.update_layout(showlegend=show_legend)
         save_image(fig, file_prefix)
         return fig
@@ -248,15 +262,16 @@ class StudySet:
         self,
         results: Dict[str, pd.DataFrame],
         metric: str = "r_squared",
-        width: int = 700,
-        height: int = 300,
+        width: int = 760,
+        height: int = 360,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
         Bar chart comparing PERMANOVA results from several feature subsets.
 
         ``results`` maps a label (e.g. "All bins") to the long-form output of
-        :meth:`permanova`.
+        :meth:`permanova`. p-values are drawn on a log axis, since the
+        interesting ones are the small ones, with the 0.05 line marked.
         """
         df = pd.concat([
             result.assign(Bins=label) for label, result in results.items()
@@ -268,10 +283,10 @@ class StudySet:
             facet_col="category",
             color="Bins",
             barmode="group",
-            template="plotly_white",
+            template=TEMPLATE,
             facet_col_spacing=0.1,
             labels={
-                "r_squared": "R^2",
+                "r_squared": "Variance explained (R&#178;)",
                 "p_value": "p-value",
                 "study": "Study",
                 "disease": "Disease",
@@ -282,9 +297,14 @@ class StudySet:
             category_orders={"study": self.study_order},
         )
         if metric == "p_value":
-            fig.add_hline(y=0.05, line_dash="dot", line_color="red")
+            fig.add_hline(y=0.05, **THRESHOLD_LINE)
+            fig.update_yaxes(type="log", tickvals=[0.001, 0.01, 0.05, 0.1, 0.5, 1])
         fig.update_yaxes(matches=None, showticklabels=True)
+        fig.update_xaxes(title_text="")
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1].title()))
+        fig.update_layout(legend=dict(
+            orientation="h", x=0.5, xanchor="center", y=1 + 30 / height, yanchor="bottom",
+        ), margin=dict(t=90))
         save_image(fig, file_prefix)
         return fig
 
@@ -311,13 +331,18 @@ class StudySet:
     def cluster_disease_contingency(
         self,
         clusters: Dict[str, pd.DataFrame],
-        width: int = 700,
-        height: int = 450,
+        width: int = 950,
+        height: int = 460,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
-        Heatmap of the association between community type and disease state,
-        for each organism and study.
+        Strength of the association between community type and disease state,
+        for each organism and study, as grouped bars of Cramér's V.
+
+        One group of bars per organism, one bar per study, so that the
+        cohorts can be read against each other within an organism and the
+        same cohort followed across organisms by its colour. The chi-squared
+        significance is printed over each bar as stars.
         """
         rows = []
         for organism, df in clusters.items():
@@ -327,35 +352,40 @@ class StudySet:
                     "organism": organism,
                     "study": study,
                     "cramers_v": result["cramers_v"],
-                    "label": f'V={result["cramers_v"]:.2} {_significance_stars(result["p_value"])}',
+                    "p_value": result["p_value"],
+                    "stars": _significance_stars(result["p_value"]),
                 })
 
         results = pd.DataFrame(rows)
-        panels = {
-            column: (
-                results
-                .pivot(index="organism", columns="study", values=column)
-                .reindex(columns=self.study_order)
-                .sort_index(axis=0, ascending=False)
-            )
-            for column in ("label", "cramers_v")
-        }
-        fig = go.Figure(
-            data=go.Heatmap(
-                x=panels["label"].columns.values,
-                y=panels["label"].index.values,
-                z=panels["cramers_v"],
-                text=panels["label"],
-                colorscale="Blues",
-                colorbar_title="Cramer's V",
-                texttemplate="%{text}",
-            ),
-            layout=dict(
-                width=width,
-                height=height,
-                title="Chi2 Contingency: Cluster vs. Disease",
-                title_x=0.5,
-            ),
+        fig = px.bar(
+            data_frame=results,
+            x="organism",
+            y="cramers_v",
+            color="study",
+            text="stars",
+            barmode="group",
+            template=TEMPLATE,
+            color_discrete_map=group_colors(self.study_order),
+            category_orders={"study": self.study_order, "organism": sorted(clusters)},
+            labels={"organism": "Organism", "cramers_v": "Cram&#233;r's V", "study": "Study"},
+            hover_data={"p_value": ":.2e", "cramers_v": ":.2f"},
+            title="Association between community type and disease state",
+            width=width,
+            height=height,
+        )
+        fig.update_traces(textposition="outside", textangle=-90, textfont_size=11, cliponaxis=False)
+        fig.update_yaxes(range=[0, results["cramers_v"].max() * 1.2])
+        fig.update_xaxes(title_text="", tickangle=-25)
+        fig.update_layout(
+            bargroupgap=0.05,
+            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
+            margin=dict(t=95, b=130),
+        )
+        # Below the tilted organism labels
+        fig.add_annotation(
+            text="Chi-squared test: * p < 0.05, ** p < 0.01, *** p < 0.001",
+            x=0.5, xref="paper", y=0, yref="paper", yshift=-105, showarrow=False,
+            font=dict(size=11, color="#555555"),
         )
         save_image(fig, file_prefix)
         return fig
@@ -364,36 +394,48 @@ class StudySet:
         self,
         clusters: pd.DataFrame,
         width: int = 600,
-        height: int = 500,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
-        """t-SNE ordination of one organism's samples, colored by community type."""
+        """
+        t-SNE ordination of one organism's samples, colored by community type.
+
+        There can be more community types than the standard palette has
+        colours, so a larger one is used here and nowhere else, and the
+        height grows with the legend unless given.
+        """
+        order = _sorted_clusters(clusters["cluster"])
+        if height is None:
+            height = max(500, 20 * len(order) + 160)
         fig = px.scatter(
             data_frame=clusters,
             x="t-SNE 1",
             y="t-SNE 2",
             color="cluster",
-            template="plotly_white",
-            labels={"study": "Study", "disease": "Disease", "cluster": "Cluster"},
-            category_orders={
-                "study": self.study_order,
-                "cluster": _sorted_clusters(clusters["cluster"]),
-            },
+            color_discrete_sequence=LARGE_QUALITATIVE,
+            template=TEMPLATE,
+            labels={"study": "Study", "disease": "Disease", "cluster": "Community type"},
+            category_orders={"study": self.study_order, "cluster": order},
             width=width,
             height=height,
         )
+        fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, line_width=0))
+        fig.update_xaxes(showticklabels=False, ticks="")
+        fig.update_yaxes(showticklabels=False, ticks="")
         save_image(fig, file_prefix)
         return fig
 
     def cluster_composition_bars(
         self,
         clusters: pd.DataFrame,
-        width: int = 600,
+        width: int = 650,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
         Percentage of each cohort's cases and controls falling in each
-        community type.
+        community type, one row per cohort. The height follows the number of
+        cohorts unless given.
         """
         composition = (
             clusters
@@ -405,24 +447,35 @@ class StudySet:
             .melt(ignore_index=False)
             .reset_index()
         )
+        studies = [study for study in self.study_order if study in set(composition["study"])]
         fig = px.bar(
             data_frame=composition,
             x="cluster",
             y="value",
             color="disease",
+            color_discrete_map=group_colors(self._order("disease")),
             facet_col="study",
             facet_col_wrap=1,
+            facet_row_spacing=0.06,
             barmode="group",
-            template="plotly_white",
+            template=TEMPLATE,
             category_orders={
-                "study": self.study_order,
+                "study": studies,
                 "cluster": _sorted_clusters(clusters["cluster"]),
+                "disease": self._order("disease"),
             },
-            labels={"value": "%", "cluster": "", "disease": "Disease"},
+            labels={"value": "% of samples", "cluster": "", "disease": "Disease"},
             width=width,
+            height=height if height is not None else 120 * len(studies) + 130,
         )
         fig.update_yaxes(matches=None)
+        fig.update_xaxes(tickangle=-90)
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+        fig.update_layout(
+            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
+            margin=dict(t=80),
+        )
+        fig.layout.legend.y = 1 + 30 / fig.layout.height
         save_image(fig, file_prefix)
         return fig
 
@@ -432,17 +485,18 @@ class StudySet:
         self,
         features: pd.MultiIndex | pd.DataFrame,
         floor: float = 0.001,
-        width: int = 500,
-        height: int = 1200,
+        width: int = 560,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
         Abundance of each bin relative to its organism's core genome, split by
-        cohort and by case/control status.
+        cohort and by case/control status, one row per bin.
 
         Dividing by the core genome turns RPKM into the proportion of that
         organism's genomes in the sample which carry the bin, which is
-        comparable across cohorts of differing sequencing depth.
+        comparable across cohorts of differing sequencing depth. The height
+        follows the number of bins unless given.
         """
         index = features.index if isinstance(features, pd.DataFrame) else features
 
@@ -459,23 +513,44 @@ class StudySet:
                     "Feature": f"{organism} - {bin_id}",
                 }))
 
+        n_bins = len(index)
         fig = px.box(
             data_frame=pd.concat(panels),
             x="Cohort",
             y="Proportion",
             color="Group",
-            template="plotly_white",
+            color_discrete_map=group_colors(self._order("disease")),
+            template=TEMPLATE,
             log_y=True,
             facet_col="Feature",
             facet_col_wrap=1,
+            facet_row_spacing=min(0.05, 0.6 / max(n_bins, 1)),
             category_orders={"Cohort": self.cohort_order, "Group": self._order("disease")},
+            labels={"Proportion": "Proportion of genomes", "Group": ""},
             width=width,
-            height=height,
+            height=height if height is not None else 150 * n_bins + 160,
             range_y=(floor, 1),
         )
+        fig.update_traces(marker=dict(size=3, opacity=0.6), line_width=1)
+        # Only the decades are worth a tick on a three-decade axis
+        decades = [10.0 ** i for i in range(int(np.log10(floor)), 1)]
+        fig.update_yaxes(tickvals=decades, ticktext=[f"{d:g}" for d in decades])
+        fig.update_xaxes(tickangle=-40)
         fig.for_each_annotation(
             lambda a: a.update(x=0.02, xanchor="left", text=a.text.split("=", 1)[1])
         )
+        # One axis title for the column of facets, not one per row
+        fig.update_yaxes(title_text="")
+        fig.add_annotation(
+            text="Proportion of genomes", x=0, xref="paper", y=0.5, yref="paper",
+            xshift=-58, textangle=-90, showarrow=False, font=dict(size=14),
+        )
+        fig.update_layout(
+            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
+            margin=dict(t=80),
+        )
+        # Above the first facet's title, which px draws at the top of the plot
+        fig.layout.legend.y = 1 + 30 / fig.layout.height
         save_image(fig, file_prefix)
         return fig
 
@@ -490,6 +565,7 @@ class StudySet:
     ) -> go.Figure:
         """Samples ranked by how many of the given bins they carry."""
         rpkm, metadata = self._subset(features, samples)
+        kwargs.setdefault("group_order", self._order(group))
         return plot_feature_positivity(rpkm, metadata[group], **kwargs)
 
     def plot_positivity_heatmap(
@@ -501,6 +577,7 @@ class StudySet:
     ) -> go.Figure:
         """Per-sample detection of each bin, annotated by sample group."""
         rpkm, metadata = self._subset(features, samples)
+        kwargs.setdefault("group_orders", {group: self._order(group) for group in groups})
         return plot_positivity_heatmap(rpkm, metadata.reindex(columns=list(groups)), **kwargs)
 
     def _subset(
@@ -606,25 +683,32 @@ class StudySet:
             .agg(auc_mean=("roc_auc", "mean"), auc_std=("roc_auc", "std"))
             .reset_index()
         )
+        labels = [study.label for study in self.studies]
         fig = px.bar(
             data_frame=summary,
             x="organism",
             y="auc_mean",
             error_y="auc_std",
             color="study",
+            color_discrete_map=group_colors(labels),
             barmode="group",
-            template="plotly_white",
-            labels={"organism": "Organism", "auc_mean": "ROC-AUC", "study": "Study"},
-            category_orders={"study": [study.label for study in self.studies]},
+            template=TEMPLATE,
+            labels={"organism": "Organism", "auc_mean": "Validation ROC-AUC", "study": "Study"},
+            category_orders={"study": labels},
             width=width,
             height=height,
         )
+        fig.update_traces(error_y=dict(thickness=1, width=4))
         fig.add_hline(
-            y=0.5, line_dash="dash", line_color="grey",
-            annotation_text="chance", annotation_position="bottom right",
+            y=0.5, annotation_text="chance", annotation_position="bottom right",
+            annotation_font_color="#555555", **THRESHOLD_LINE,
         )
         fig.update_yaxes(range=[0.4, 1.05])
-        fig.update_xaxes(tickangle=-35)
+        fig.update_xaxes(tickangle=-35, title_text="")
+        fig.update_layout(
+            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
+            margin=dict(t=60),
+        )
         save_image(fig, file_prefix)
         return fig
 
@@ -656,23 +740,24 @@ class StudySet:
             y=y_label,
             hover_name="bin",
             hover_data={"combined": ":.5f"},
-            template="plotly_white",
+            template=TEMPLATE,
             labels={
-                x_label: f"mean |SHAP| - {x_label}",
-                y_label: f"mean |SHAP| - {y_label}",
+                x_label: f"Mean |SHAP|, {x_label}",
+                y_label: f"Mean |SHAP|, {y_label}",
             },
-            title=f"{organism} - bin importance in each study",
+            title=f"{organism}: bin importance in each study",
             width=width,
             height=height,
             range_x=[0, limit],
             range_y=[0, limit],
         )
+        fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, color=PRIMARY))
         fig.add_shape(type="line", x0=0, y0=0, x1=limit, y1=limit,
-                      line=dict(color="lightgrey", dash="dash", width=1))
+                      line=dict(color="#b0b0b0", dash="dash", width=1))
         top = df.head(n_labelled)
         fig.add_trace(go.Scatter(
             x=top[x_label], y=top[y_label], mode="text", text=top["bin"],
-            textposition="top right", textfont=dict(size=9),
+            textposition="top right", textfont=dict(size=11),
             showlegend=False, hoverinfo="skip",
         ))
         save_image(fig, file_prefix)
@@ -698,14 +783,17 @@ class StudySet:
                 x=matrix.columns,
                 y=matrix.index,
                 colorscale="Magma",
-                colorbar_title="mean |interaction|",
+                colorbar=dict(title="Mean |SHAP<br>interaction|", thickness=14),
                 hovertemplate="%{y} x %{x}: %{z:.4g}<extra></extra>",
             ),
             layout=dict(
-                title=f"{organism} - {study_label}: bin interactions",
-                xaxis=dict(tickangle=45),
-                height=max(300, 28 * len(matrix) + 120),
-                width=max(400, 28 * len(matrix) + 260),
+                title=f"{organism}, {study_label}: bin interactions",
+                template=TEMPLATE,
+                xaxis=dict(tickangle=-45, showgrid=False),
+                yaxis=dict(showgrid=False),
+                height=max(320, 30 * len(matrix) + 140),
+                width=max(440, 30 * len(matrix) + 280),
+                margin=dict(l=90, b=90),
             ),
         )
         save_image(fig, file_prefix)

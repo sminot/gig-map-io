@@ -4,6 +4,8 @@ from pathlib import Path
 from PIL import Image
 import numpy as np
 
+from .style import MATPLOTLIB_DPI, PNG_SCALE
+
 
 def save_image(
     fig: go.Figure | plt.Figure,
@@ -103,7 +105,7 @@ def _save_image_plotly_figure(
         fig.write_image(file_prefix + ".pdf")
     if as_png:
         png_path = file_prefix + ".png"
-        fig.write_image(png_path)
+        fig.write_image(png_path, scale=PNG_SCALE)
         trim_png(png_path, file_prefix + ".trimmed.png")
     if as_json:
         fig.write_json(file_prefix + ".json")
@@ -127,4 +129,4 @@ def _save_image_matplotlib_figure(
     if as_pdf:
         fig.savefig(file_prefix + ".pdf", bbox_inches="tight")
     if as_png:
-        fig.savefig(file_prefix + ".png", bbox_inches="tight")
+        fig.savefig(file_prefix + ".png", bbox_inches="tight", dpi=MATPLOTLIB_DPI)

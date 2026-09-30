@@ -12,7 +12,9 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
+from gig_map_io.helpers.enrichment import plot_enrichment
 from gig_map_io.helpers.save_image import save_image
+from gig_map_io.helpers.style import SIMPLE_TEMPLATE, TEMPLATE, organism_colors
 
 from .pangenome import Pangenome
 from .dataset_dict import DatasetDict
@@ -208,12 +210,16 @@ class PangenomeSet(DatasetDict):
         min_count: int = 2,
         alternative: str = "greater",
         universe: pd.MultiIndex | None = None,
+        title: str = "Annotations among the candidate bins",
         width: int = 800,
-        height: int = 500,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
-        Horizontal bar plot of enriched annotation terms.
+        The terms passing the q-value threshold, drawn the same way as the
+        per-study enrichment figures: how many of the bins carry each term,
+        and the log2 odds ratio against the background, with the q-value
+        printed beside it. Terms are ordered by odds ratio.
 
         Parameters
         ----------
@@ -228,6 +234,8 @@ class PangenomeSet(DatasetDict):
             Passed to find_enriched_annotation_terms when features is a MultiIndex.
         universe : pd.MultiIndex, optional
             Passed to find_enriched_annotation_terms when features is a MultiIndex.
+        height : int, optional
+            Follows the number of terms unless given.
         """
         if isinstance(features, pd.MultiIndex):
             enrichment_df = self.find_enriched_annotation_terms(
@@ -239,45 +247,19 @@ class PangenomeSet(DatasetDict):
         df = enrichment_df[enrichment_df["qvalue"] < qvalue_threshold].sort_values(
             ["odds_ratio", "term"]
         )
-
-        hover = {"qvalue": ":.2e", "odds_ratio": ":.2f", "n_foreground": True, "n_background": True}
-        common = dict(orientation="h", template="plotly_white")
-
-        fig = make_subplots(rows=1, cols=3, shared_yaxes=True, horizontal_spacing=0.05)
-
-        for trace in px.bar(
-            data_frame=df, x="n_foreground", y="term", hover_data=hover,
-            labels=dict(n_foreground="Foreground Bins", term="Annotation Term"),
-            **common,
-        ).data:
-            fig.add_trace(trace, row=1, col=1)
-
-        for trace in px.bar(
-            data_frame=df, x="odds_ratio", y="term", hover_data=hover,
-            labels=dict(odds_ratio="Odds Ratio", term="Annotation Term"),
-            **common,
-        ).data:
-            fig.add_trace(trace, row=1, col=2)
-
-        for trace in px.bar(
-            data_frame=df, x="qvalue", y="term", hover_data=hover,
-            labels=dict(qvalue="Q-value", term="Annotation Term"),
-            **common,
-        ).data:
-            fig.add_trace(trace, row=1, col=3)
-
-        fig.update_layout(
+        return plot_enrichment(
+            df.assign(group="Candidate bins"),
+            label="term",
+            axis_title="Annotation term",
+            title=title,
+            qvalue_threshold=qvalue_threshold,
+            order=df["term"].tolist(),
             width=width,
             height=height,
-            showlegend=False,
-            xaxis=dict(title="Bins"),
-            xaxis2=dict(title="Odds Ratio"),
-            xaxis3=dict(title="Q-value"),
-            yaxis=dict(automargin=True),
-            template="plotly_white",
+            file_prefix=file_prefix,
+            mark="qvalue",
+            show_legend=False,
         )
-        save_image(fig, file_prefix)
-        return fig
 
     def bin_genome_heatmap(self,
         col_wrap: int = 3,
@@ -290,8 +272,9 @@ class PangenomeSet(DatasetDict):
         """
         Heatmap of bin presence/absence for each genome, faceted by pangenome.
         """
+        n_rows = -(-len(self.pangenomes) // col_wrap)
         fig = make_subplots(
-            rows=len(self.pangenomes) // col_wrap + 1,
+            rows=n_rows,
             cols=col_wrap,
             shared_yaxes=False,
             shared_xaxes=False,
@@ -307,11 +290,24 @@ class PangenomeSet(DatasetDict):
                     col=i % col_wrap + 1
                 )
 
-        fig.update_layout(height=height, width=width)
+        fig.update_layout(
+            height=height, width=width, template=SIMPLE_TEMPLATE,
+            margin=dict(l=70, r=20, t=50, b=70),
+        )
 
         # Left-align the subplot titles
         for i in range(len(fig.layout.annotations)):
             fig.layout.annotations[i].update(x=0.02, xanchor='left', xref=f'x{i+1}')
+
+        # One axis title per dimension, rather than one per facet
+        fig.add_annotation(
+            text="Gene", x=0.5, xref="paper", y=0, yref="paper", yshift=-45,
+            showarrow=False, font=dict(size=14),
+        )
+        fig.add_annotation(
+            text="Genome", x=0, xref="paper", y=0.5, yref="paper", xshift=-55,
+            textangle=-90, showarrow=False, font=dict(size=14),
+        )
 
         save_image(fig, file_prefix)
         return fig
@@ -340,12 +336,13 @@ class PangenomeSet(DatasetDict):
             x="bin_size",
             y="count",
             color="pangenome",
+            color_discrete_map=organism_colors(self.pangenomes),
             labels=dict(
-                bin_size="Pangenome Bin Size (# of Genes)",
-                count="Total Gene Content",
-                pangenome="Pangenome"
+                bin_size="Pangenome bin size (genes)",
+                count="Total gene content (genes)",
+                pangenome="Organism"
             ),
-            template="plotly_white",
+            template=TEMPLATE,
             hover_name="bin_names",
             width=width,
             height=height
@@ -378,25 +375,31 @@ class PangenomeSet(DatasetDict):
             for pangenome_name, pangenome in self.pangenomes.items()
         ]).rename(columns={"50%": "n_genes"})
 
+        colors = organism_colors(self.pangenomes)
         fig = px.line(
             data_frame=rf,
             x="n_genomes",
             y="n_genes",
             color="pangenome",
+            color_discrete_map=colors,
             labels=dict(
-                n_genomes="Number of Genomes",
-                n_genes= "Number of Genes",
-                pangenome="Pangenome"
+                n_genomes="Number of genomes",
+                n_genes= "Number of genes",
+                pangenome="Organism"
             ),
-            template="plotly_white",
+            template=TEMPLATE,
             width=width,
             height=height
         )
+        fig.update_traces(line_width=2)
         point_df = rf.sort_values(by=["pangenome","n_genomes"]).groupby("pangenome").tail(1)
-        for trace in px.scatter(data_frame=point_df, x="n_genomes", y="n_genes", color="pangenome").data:
-            trace.update(showlegend=False)
+        for trace in px.scatter(
+            data_frame=point_df, x="n_genomes", y="n_genes", color="pangenome",
+            color_discrete_map=colors,
+        ).data:
+            trace.update(showlegend=False, marker_size=8)
             fig.add_trace(trace)
-        fig.update_xaxes(type="log")
+        fig.update_xaxes(type="log", dtick=1)
         fig.update_yaxes(range=[0, None])
         save_image(fig, file_prefix)
         return fig
