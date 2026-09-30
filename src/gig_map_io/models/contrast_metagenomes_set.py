@@ -594,80 +594,61 @@ class ContrastMetagenomesSet(DatasetDict):
         estimate_thresh: float = 0.25,
         self_label: str = "self",
         comparitor_label: str = "comparitor",
-        width: int = 400,
-        height: int = 400,
+        width: int = 800,
+        height: int = 500,
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
         """
-        Compare the significance categories of two contrast sets.
+        How often two analyses call the same bin, against how often they would
+        by chance.
+
+        Every bin falls into one of nine categories: each analysis called it
+        lower in cases, higher in cases, or not significant. The bars give the
+        observed count of each category beside the count expected if the two
+        analyses were independent, which is what the chi-squared test in the
+        title compares.
+
+        The categories are ordered by what they mean rather than by their
+        position in the contingency table -- agreement first, then
+        disagreement, then bins only one analysis called -- so that the
+        question the figure answers can be read left to right.
         """
         df = (
             self.compare_association(comparitor)
             .pipe(lambda d: _add_sig_categories(d, fdr, sig_thresh, estimate_thresh))
         )
 
-        # Make a table comparing the significance categories
-        sig_table = df.pivot_table(
+        observed = df.pivot_table(
             columns="self_sig",
             index="comparitor_sig",
             values="feature",
             aggfunc="count",
             fill_value=0,
-        ).reindex(
-            index=["<", "=", ">"],
-            columns=["<", "=", ">"],
+        ).reindex(index=SIG_LEVELS, columns=SIG_LEVELS, fill_value=0)
+
+        chi2, pvalue, dof, _ = stats.chi2_contingency(observed)
+
+        # Computed from the margins rather than taken from chi2_contingency,
+        # which drops any row or column that is entirely empty and would then
+        # not line up with the nine bars
+        total = observed.values.sum()
+        expected = pd.DataFrame(
+            np.outer(observed.sum(axis=1), observed.sum(axis=0)) / total,
+            index=observed.index,
+            columns=observed.columns,
         )
 
-        # Run a chi-squared test to compare the significance categories
-        chi2, p, dof, expected = stats.chi2_contingency(sig_table)
-
-        # Make a table showing the percentage difference between the significance categories
-        # compared to the expected values
-        expected_table = pd.DataFrame(expected, index=sig_table.index, columns=sig_table.columns)
-        percent_diff_table = (sig_table - expected_table) / expected_table * 100
-
-        # Make a heatmap showing the percentage difference
-        # Include text in the cells showing the percentage difference
-        # with the +/-, %, and number of features
-        text = pd.DataFrame({
-            cname: {
-                iname: (
-                    f"{v:.1f}%<br>n={sig_table.loc[iname, cname]:,}"
-                    if v < 0
-                    else f"+{v:.1f}%<br>n={sig_table.loc[iname, cname]:,}")
-                    for iname, v in row.items()
-            }
-            for cname, row in percent_diff_table.iterrows()
-        })
-        fig = go.Figure(
-            data=[
-                go.Heatmap(
-                    z=percent_diff_table.values,
-                    x=percent_diff_table.columns.values,
-                    y=percent_diff_table.index.values,
-                    text=text.values,
-                    colorscale="RdBu",
-                    texttemplate="%{text}",
-                    zmid=0,
-                    showscale=False,
-                )
-            ]
-        )
-        fig.update_layout(
-            title=f"Chi-squared test (p={format_pvalue(p)})",
-            title_x=0.5,
-            xaxis_title=self_label,
-            yaxis_title=comparitor_label,
+        return _plot_sig_categories(
+            observed=observed,
+            expected=expected,
+            pvalue=pvalue,
+            self_label=self_label,
+            comparitor_label=comparitor_label,
             width=width,
             height=height,
-            xaxis=dict(scaleanchor="y", scaleratio=1),
-            plot_bgcolor="white",
-            coloraxis_showscale=False
+            file_prefix=file_prefix,
         )
-        save_image(fig, file_prefix)
-
-        return fig
 
     def compare_sig_scatter(
         self,
@@ -892,3 +873,168 @@ def _add_sig_category(
         return ">"
     else:
         return "<"
+
+
+#: The three ways an analysis can call a bin, and how each is drawn
+SIG_LEVELS = ["<", "=", ">"]
+_SIG_ARROW = {"<": "&#8595;", ">": "&#8593;", "=": "ns"}
+
+#: The nine categories, ordered by meaning: (self, comparitor, group)
+_SIG_CATEGORY_ORDER = [
+    ("<", "<", "Same direction"),
+    (">", ">", "Same direction"),
+    ("<", ">", "Opposite"),
+    (">", "<", "Opposite"),
+    ("<", "=", "One study only"),
+    (">", "=", "One study only"),
+    ("=", "<", "One study only"),
+    ("=", ">", "One study only"),
+    ("=", "=", "Neither"),
+]
+
+_OBSERVED_COLOR = "#2c6fbb"
+_EXPECTED_COLOR = "#c3cedb"
+
+#: Below this expected count a fold change says more about rounding than about
+#: the data, and the chi-squared approximation is unreliable
+_MIN_EXPECTED_TO_LABEL = 5
+
+
+def _find_axis_break(
+    values: list[float],
+    min_gap: float = 3.0,
+    min_span: float = 6.0,
+    max_fraction_above: float = 0.40,
+) -> tuple[float, float] | None:
+    """
+    Where to split the count axis so that small categories stay legible beside
+    large ones, or ``None`` when one scale serves.
+
+    Only splits that leave most of the bars below the break are considered. The
+    point of the discontinuity is to lift a few outlying categories out of the
+    way; splitting at the largest gap wherever it falls can instead isolate one
+    small category and push everything else above the break, which is worse
+    than no break at all.
+    """
+    positive = sorted(v for v in values if v > 0)
+    n = len(positive)
+    if n < 3 or positive[-1] / positive[0] < min_span:
+        return None
+
+    first = max(1, int(np.ceil(n - 1 - n * max_fraction_above)))
+    candidates = [
+        (positive[i + 1] / positive[i], positive[i], positive[i + 1])
+        for i in range(first, n - 1)
+    ]
+    if not candidates:
+        return None
+    ratio, below, above = max(candidates)
+    return (below, above) if ratio >= min_gap else None
+
+
+def _plot_sig_categories(
+    observed: pd.DataFrame,
+    expected: pd.DataFrame,
+    pvalue: float,
+    self_label: str,
+    comparitor_label: str,
+    width: int,
+    height: int,
+    file_prefix: str | None,
+) -> go.Figure:
+    """Draw the nine categories as observed-against-expected bars."""
+    ticks, groups, obs, exp = [], [], [], []
+    for self_sig, comparitor_sig, group in _SIG_CATEGORY_ORDER:
+        ticks.append(f"{_SIG_ARROW[self_sig]}<br>{_SIG_ARROW[comparitor_sig]}")
+        groups.append(group)
+        obs.append(observed.loc[comparitor_sig, self_sig])
+        exp.append(expected.loc[comparitor_sig, self_sig])
+
+    axis_break = _find_axis_break(list(obs) + list(exp))
+    rows = 2 if axis_break else 1
+    fig = make_subplots(
+        rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04,
+        row_heights=[0.32, 0.68] if axis_break else [1.0],
+    )
+    for row in range(1, rows + 1):
+        fig.add_trace(
+            go.Bar(x=ticks, y=obs, name="Observed", marker_color=_OBSERVED_COLOR,
+                   showlegend=(row == 1)),
+            row=row, col=1,
+        )
+        fig.add_trace(
+            go.Bar(x=ticks, y=exp, name="Expected if independent",
+                   marker_color=_EXPECTED_COLOR, showlegend=(row == 1)),
+            row=row, col=1,
+        )
+
+    fig.update_layout(
+        barmode="group", bargap=0.32, bargroupgap=0.05, template="plotly_white",
+        width=width, height=height,
+        title=dict(
+            text=f"Do {self_label} and {comparitor_label} flag the same bins?"
+                 f"<br><sub>chi-squared p = {format_pvalue(pvalue)}</sub>",
+            x=0.5,
+        ),
+        # The title runs to two lines, so the legend needs to clear both
+        legend=dict(orientation="h", y=1.0, x=0.5, xanchor="center", yanchor="bottom"),
+        margin=dict(b=130, t=120, l=85),
+    )
+    fig.update_xaxes(tickfont=dict(size=13), row=rows, col=1)
+
+    if axis_break:
+        below, above = axis_break
+        fig.update_xaxes(showticklabels=False, row=1, col=1)
+        fig.update_yaxes(range=[above * 0.93, max(list(obs) + list(exp)) * 1.14], row=1, col=1)
+        fig.update_yaxes(range=[0, below * 1.32], row=2, col=1)
+        # Slashes across the axis at the discontinuity, so that the two panels
+        # are not read as one continuous scale
+        gap = (fig.layout.yaxis2.domain[1] + fig.layout.yaxis.domain[0]) / 2
+        for offset in (-0.007, 0.007):
+            fig.add_shape(
+                type="line", xref="paper", yref="paper",
+                x0=-0.010, x1=0.010,
+                y0=gap + offset - 0.015, y1=gap + offset + 0.015,
+                line=dict(color="#333333", width=1.3),
+            )
+    else:
+        fig.update_yaxes(range=[0, max(list(obs) + list(exp)) * 1.2], row=1, col=1)
+
+    for i, (o, e) in enumerate(zip(obs, exp)):
+        if e < _MIN_EXPECTED_TO_LABEL:
+            continue
+        row = 1 if (axis_break and max(o, e) >= axis_break[1]) else rows
+        fig.add_annotation(
+            x=i, y=max(o, e), text=f"{o / e:.2f}&#215;", showarrow=False,
+            yshift=10, font=dict(size=10, color="#444444"), row=row, col=1,
+        )
+
+    for i in range(len(groups) - 1):
+        if groups[i] != groups[i + 1]:
+            fig.add_vline(x=i + 0.5, line=dict(color="#e2e2e2", width=1), row="all", col=1)
+
+    start = 0
+    for i in range(1, len(groups) + 1):
+        if i == len(groups) or groups[i] != groups[start]:
+            fig.add_annotation(
+                x=(start + i - 1) / 2, y=0, yref="paper", text=f"<b>{groups[start]}</b>",
+                showarrow=False, yshift=-62, xanchor="center",
+                font=dict(size=11, color="#333333"),
+            )
+            start = i
+
+    # One title spanning both panels, rather than one centred on the lower
+    fig.update_yaxes(title_text="", row=rows, col=1)
+    fig.add_annotation(
+        x=0, xref="paper", y=0.5, yref="paper", xshift=-68, textangle=-90,
+        text="Pangenome bins", showarrow=False, font=dict(size=13, color="#2a3f5f"),
+    )
+    fig.add_annotation(
+        x=0.5, xref="paper", y=0, yref="paper", yshift=-96, xanchor="center",
+        showarrow=False, font=dict(size=11, color="#555555"),
+        text=f"Each tick: direction in <b>{self_label}</b> (upper) "
+             f"and <b>{comparitor_label}</b> (lower)",
+    )
+
+    save_image(fig, file_prefix)
+    return fig
