@@ -20,7 +20,7 @@ from gig_map_io.helpers.format_pvalue import format_pvalue
 from gig_map_io.helpers.observed_expected import plot_observed_expected
 from gig_map_io.helpers.style import (
     DENSE_MARKER_OPACITY, QUALITATIVE, TEMPLATE, THRESHOLD_LINE, ZERO_LINE,
-    group_colors, organism_colors,
+    group_colors, organism_colors, organism_order,
 )
 from .contrast_metagenomes import ContrastMetagenomes
 from .dataset_dict import DatasetDict
@@ -179,6 +179,7 @@ class ContrastMetagenomesSet(DatasetDict):
             hover_name="hover_name",
             color="pangenome",
             color_discrete_map=organism_colors(self.pangenome_names),
+            category_orders={"pangenome": organism_order(self.pangenome_names)},
             template=TEMPLATE,
             labels=dict(
                 Estimate_clipped="Effect size (clipped)",
@@ -710,6 +711,7 @@ class ContrastMetagenomesSet(DatasetDict):
             y=f"{value_col}_comparitor",
             color="pangenome",
             color_discrete_map=organism_colors(self.pangenome_names),
+            category_orders={"pangenome": organism_order(self.pangenome_names)},
             hover_name="hover_name",
             template=TEMPLATE,
             labels={
@@ -771,6 +773,7 @@ class ContrastMetagenomesSet(DatasetDict):
             y="Estimate_comparitor",
             color="pangenome",
             color_discrete_map=organism_colors(self.pangenome_names),
+            category_orders={"pangenome": organism_order(self.pangenome_names)},
             hover_name="hover_name",
             template=TEMPLATE,
             labels={

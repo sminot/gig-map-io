@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
-from gig_map_io.helpers.enrichment import plot_enrichment
+from gig_map_io.helpers.enrichment import enrich_organisms, plot_enrichment
 from gig_map_io.helpers.save_image import save_image
 from gig_map_io.helpers.style import SIMPLE_TEMPLATE, TEMPLATE, organism_colors
 
@@ -203,6 +203,59 @@ class PangenomeSet(DatasetDict):
         # they were collected in varies between processes.
         return df.sort_values(["pvalue", "term"]).reset_index(drop=True)
 
+    @cached_property
+    def all_bins(self) -> pd.MultiIndex:
+        """Every (pangenome, bin) pair in the set."""
+        return pd.MultiIndex.from_frame(
+            self.gene_bins.dropna(subset=["bin"])[["pangenome", "bin"]].drop_duplicates(),
+            names=["pangenome", "bin"],
+        )
+
+    def find_enriched_organisms(
+        self,
+        features: pd.MultiIndex | pd.DataFrame,
+        universe: pd.MultiIndex | None = None,
+        alternative: str = "greater",
+    ) -> pd.DataFrame:
+        """
+        Whether each organism contributed more bins to the given set than its
+        share of ``universe`` (every bin in the set by default). Fisher's
+        exact test per organism, FDR-corrected across organisms.
+        """
+        index = features.index if isinstance(features, pd.DataFrame) else features
+        return enrich_organisms(
+            index, self.all_bins if universe is None else universe, sorted(self.pangenomes), alternative
+        )
+
+    def plot_enriched_organisms(
+        self,
+        features: pd.MultiIndex | pd.DataFrame,
+        universe: pd.MultiIndex | None = None,
+        qvalue_threshold: float = 0.2,
+        title: str = "Organisms among the candidate bins",
+        width: int = 800,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        The organism counterpart of :meth:`plot_enriched_annotation_terms`:
+        how many of the bins each organism contributed and the log2 odds ratio
+        against its share of the background, with the q-value beside each bar.
+        """
+        enrichment = self.find_enriched_organisms(features, universe)
+        return plot_enrichment(
+            enrichment.assign(group="Candidate bins"),
+            label="organism",
+            axis_title="Organism",
+            title=title,
+            qvalue_threshold=qvalue_threshold,
+            order=sorted(enrichment["organism"]),
+            width=width,
+            height=None,
+            file_prefix=file_prefix,
+            mark="qvalue",
+            show_legend=False,
+        )
+
     def plot_enriched_annotation_terms(
         self,
         features: pd.MultiIndex | pd.DataFrame,
@@ -253,7 +306,7 @@ class PangenomeSet(DatasetDict):
             axis_title="Annotation term",
             title=title,
             qvalue_threshold=qvalue_threshold,
-            order=df["term"].tolist(),
+            order=df["term"].tolist()[::-1],
             width=width,
             height=height,
             file_prefix=file_prefix,

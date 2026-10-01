@@ -11,7 +11,6 @@ copy of the data.
 from __future__ import annotations
 
 import json
-from collections import Counter
 from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -27,7 +26,8 @@ from .pangenome_set import PangenomeSet
 from .phylogeny import PangenomePhylogeny
 from .phylogeny_set import PangenomePhylogenySet
 from .sample_group import SampleGroup
-from ..helpers.enrichment import ASSOCIATION_COLORS, plot_enrichment
+from ..helpers.enrichment import ASSOCIATION_COLORS, enrich_organisms, plot_enrichment
+from ..helpers.style import organism_order
 
 
 class Study:
@@ -288,50 +288,8 @@ class Study:
         foreground and in the background, the totals, the odds ratio, and the
         p- and q-values.
         """
-        from scipy import stats
-        from statsmodels.stats.multitest import multipletests
-
         index = features.index if isinstance(features, pd.DataFrame) else features
-        foreground = set(index)
-        universe = set(self.tested_bins)
-
-        untested = foreground - universe
-        if untested:
-            raise ValueError(
-                f"{len(untested)} of the given bins were not tested by study "
-                f"{self.name!r}, e.g. {sorted(untested)[0]}"
-            )
-
-        foreground_counts = Counter(organism for organism, _ in foreground)
-        universe_counts = Counter(organism for organism, _ in universe)
-        n_foreground = len(foreground)
-        n_background = len(universe) - n_foreground
-
-        rows = []
-        for organism in self.organisms:
-            in_foreground = foreground_counts.get(organism, 0)
-            in_background = universe_counts.get(organism, 0) - in_foreground
-            odds_ratio, pvalue = stats.fisher_exact(
-                [
-                    [in_foreground, in_background],
-                    [n_foreground - in_foreground, n_background - in_background],
-                ],
-                alternative=alternative,
-            )
-            rows.append({
-                "organism": organism,
-                "n_foreground": in_foreground,
-                "n_background": in_background,
-                "n_foreground_total": n_foreground,
-                "n_background_total": n_background,
-                "odds_ratio": odds_ratio,
-                "pvalue": pvalue,
-            })
-
-        df = pd.DataFrame(rows)
-        df["qvalue"] = multipletests(df["pvalue"], method="fdr_bh")[1]
-        # Organisms contributing no bins all share a p-value of 1
-        return df.sort_values(["pvalue", "organism"]).reset_index(drop=True)
+        return enrich_organisms(index, self.tested_bins, self.organisms, alternative)
 
     def organism_enrichment(
         self,
@@ -407,7 +365,7 @@ class Study:
             axis_title="Organism",
             title=f"{self.label} - organisms among the associated bins",
             qvalue_threshold=qvalue_threshold,
-            order=list(reversed(self.organisms)),
+            order=organism_order(self.organisms),
             width=width,
             height=height,
             file_prefix=file_prefix,
@@ -473,6 +431,9 @@ class Study:
 
     def plot_enriched_annotation_terms(self, features, **kwargs: Any) -> go.Figure:
         return self.pangenomes.plot_enriched_annotation_terms(features, **kwargs)
+
+    def plot_enriched_organisms(self, features, **kwargs: Any) -> go.Figure:
+        return self.pangenomes.plot_enriched_organisms(features, **kwargs)
 
     def compare_membership_vs_distance(self, organism: str, **kwargs: Any) -> go.Figure:
         return self.pangenome(organism).compare_membership_vs_distance(**kwargs)

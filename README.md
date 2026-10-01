@@ -158,13 +158,42 @@ study.bin_abundance_heatmap(bins.index, file_prefix=script.output("figure"))
 It exposes `--datasets`, `--studies`, `--output-dir`, and one option per
 declared input, each defaulting to where that thing sits in a checkout.
 
+## Multi-panel figures
+
+`gig_map_io.helpers.panels.compose_panels` places the PDFs that several
+plotting methods wrote onto one page as lettered panels, laid out left to right
+in a grid of a given number of columns and wrapping into rows. Each panel is
+scaled to its cell's width (optionally spanning several columns) and, if it
+would be too tall, to a height cap, so a tall narrow panel does not stretch its
+row. The vector content of each PDF is kept as is.
+
+```python
+from gig_map_io.helpers.panels import compose_panels
+
+compose_panels(
+    {
+        "width_mm": 170,
+        "columns": 3,
+        "max_panel_height_mm": 60,
+        "panels": [
+            {"pdf": "analysis/pangenome_database/rarefaction_curve/figure.pdf"},
+            {"pdf": "analysis/combined_studies/gvhd_volcano/figure.pdf", "span": 2},
+        ],
+    },
+    root="path/to/analysis/repo",
+    output="figure.pdf",
+)
+```
+
 ## Figure style
 
 Every plotting method draws with the template and colours in
 `gig_map_io.helpers.style`, so that figures from different methods read as one
 set. `TEMPLATE` (a light grid) and `SIMPLE_TEMPLATE` (axis lines only, for
 heatmaps and trees) layer the shared fonts and layout over plotly's own
-templates. `organism_colors` gives every organism a fixed colour by name, and
+templates. `organism_order` lists organisms alphabetically by display name, which is the
+order every figure uses, `organism_colors` gives every organism a fixed colour
+by name, and
 `group_colors` colours the levels of a sample group in the order the study
 declares them, with the first level of a two-level group -- the case-like one
 -- in the warm colour. `save_image` exports PNGs at twice the layout size.

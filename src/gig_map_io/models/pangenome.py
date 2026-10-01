@@ -567,10 +567,16 @@ class Pangenome(Dataset):
         remove_gene_id = True,
         remove_org_tag = True,
         text_offset = 0.025,
+        font_size: float = 10.0,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
         Map of genes in a bin.
+
+        ``width`` and ``height`` are in inches, and set the span of the arrows;
+        the labels standing over them extend the drawing above that. A panel
+        meant for print is drawn at its printed width with ``font_size`` at
+        the printed point size.
         """
 
         # Get a DataFrame with the gene coordinates
@@ -618,6 +624,7 @@ class Pangenome(Dataset):
                 text_offset,
                 r['label'],
                 rotation=90,
+                fontsize=font_size,
                 horizontalalignment='center',
                 verticalalignment='bottom'
             )
@@ -655,6 +662,7 @@ class Pangenome(Dataset):
             0.5,
             - (text_offset),
             size_label,
+            fontsize=font_size,
             horizontalalignment='center',
             verticalalignment='bottom'
         )

@@ -19,13 +19,14 @@ from plotly import graph_objects as go
 
 from ..helpers.clustering import leiden
 from ..helpers.contingency import chi2_contingency_test
+from ..helpers.enrichment import enrich_organisms, plot_enrichment
 from ..helpers.ordination import tsne
 from ..helpers.permanova import permanova
 from ..helpers.positivity import plot_feature_positivity, plot_positivity_heatmap
 from ..helpers.save_image import save_image
 from ..helpers.style import (
     DENSE_MARKER_OPACITY, LARGE_QUALITATIVE, NEUTRAL, PRIMARY, TEMPLATE, THRESHOLD_LINE,
-    group_colors,
+    group_colors, organism_colors, organism_order,
 )
 from ..helpers.supervised import fit_classifier
 from .study import Study
@@ -366,7 +367,7 @@ class StudySet:
             barmode="group",
             template=TEMPLATE,
             color_discrete_map=group_colors(self.study_order),
-            category_orders={"study": self.study_order, "organism": sorted(clusters)},
+            category_orders={"study": self.study_order, "organism": organism_order(clusters)},
             labels={"organism": "Organism", "cramers_v": "Cram&#233;r's V", "study": "Study"},
             hover_data={"p_value": ":.2e", "cramers_v": ":.2f"},
             title="Association between community type and disease state",
@@ -694,7 +695,7 @@ class StudySet:
             barmode="group",
             template=TEMPLATE,
             labels={"organism": "Organism", "auc_mean": "Validation ROC-AUC", "study": "Study"},
-            category_orders={"study": labels},
+            category_orders={"study": labels, "organism": organism_order(summary["organism"])},
             width=width,
             height=height,
         )
@@ -760,6 +761,185 @@ class StudySet:
             textposition="top right", textfont=dict(size=11),
             showlegend=False, hoverinfo="skip",
         ))
+        save_image(fig, file_prefix)
+        return fig
+
+    def plot_shap_comparison_all(
+        self,
+        shap: pd.DataFrame,
+        n_labelled: int = 8,
+        width: int = 720,
+        height: int = 600,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        Every organism's bins on one plot: importance to the first study's
+        model against importance to the second's, coloured by organism, with
+        the bins ranking highest on the combined importance named.
+        """
+        if len(self.studies) != 2:
+            raise ValueError("plot_shap_comparison_all compares exactly two studies")
+        x_label, y_label = (study.label for study in self.studies)
+        df = shap.sort_values(["combined", "organism", "bin"], ascending=[False, True, True])
+        limit = max(df[x_label].max(), df[y_label].max()) * 1.08
+
+        fig = px.scatter(
+            data_frame=df,
+            x=x_label,
+            y=y_label,
+            color="organism",
+            color_discrete_map=organism_colors(df["organism"]),
+            category_orders={"organism": organism_order(df["organism"])},
+            hover_name="bin",
+            hover_data={"combined": ":.4f", "organism": True},
+            template=TEMPLATE,
+            labels={
+                x_label: f"Mean |SHAP|, {x_label}",
+                y_label: f"Mean |SHAP|, {y_label}",
+                "organism": "Organism",
+            },
+            title="Bin importance in each study, all organisms",
+            width=width,
+            height=height,
+            range_x=[0, limit],
+            range_y=[0, limit],
+        )
+        fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, line_width=0))
+        fig.add_shape(type="line", x0=0, y0=0, x1=limit, y1=limit,
+                      line=dict(color="#b0b0b0", dash="dash", width=1))
+        # The named bins crowd the lower-left corner, so each label is set
+        # out to the right, spaced evenly down the empty side of the plot,
+        # and tied back to its point with an arrow
+        top = df.head(n_labelled).reset_index(drop=True)
+        top = top.sort_values(y_label, ascending=False).reset_index(drop=True)
+        for i, row in top.iterrows():
+            fig.add_annotation(
+                x=row[x_label], y=row[y_label],
+                ax=limit * 0.55,
+                ay=limit * (0.95 - 0.5 * i / max(len(top) - 1, 1)),
+                axref="x", ayref="y",
+                text=f"{row['organism']} {row['bin']}",
+                showarrow=True, arrowhead=2, arrowwidth=1, arrowcolor="#444444",
+                font=dict(size=11), bgcolor="rgba(255,255,255,0.85)", xanchor="left",
+            )
+        save_image(fig, file_prefix)
+        return fig
+
+    def importance_enrichment(
+        self,
+        shap: pd.DataFrame,
+        top_fraction: float = 0.1,
+    ) -> pd.DataFrame:
+        """
+        Whether each organism is over-represented among the bins each study's
+        models rely on most: for each study, the bins in the top
+        ``top_fraction`` of mean |SHAP| across every modelled bin, tested
+        against the organisms' shares of all the modelled bins. One row per
+        organism per study, labelled by a ``group`` column.
+        """
+        universe = pd.MultiIndex.from_frame(shap[["organism", "bin"]])
+        organisms = organism_order(shap["organism"])
+        n_top = max(1, int(round(top_fraction * len(shap))))
+        panels = []
+        for study in self.studies:
+            top = shap.nlargest(n_top, study.label, keep="all")
+            foreground = pd.MultiIndex.from_frame(top[["organism", "bin"]])
+            panels.append(enrich_organisms(foreground, universe, organisms).assign(group=study.label))
+        return pd.concat(panels, ignore_index=True)
+
+    def plot_importance_enrichment(
+        self,
+        enrichment: pd.DataFrame,
+        qvalue_threshold: float = 0.2,
+        width: int = 800,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """The output of :meth:`importance_enrichment`, drawn like the association enrichment."""
+        return plot_enrichment(
+            enrichment,
+            label="organism",
+            axis_title="Organism",
+            title="Organisms among the bins the models rely on most",
+            qvalue_threshold=qvalue_threshold,
+            order=organism_order(enrichment["organism"]),
+            width=width,
+            height=None,
+            file_prefix=file_prefix,
+        )
+
+    def plot_interaction_share(
+        self,
+        interactions: pd.DataFrame,
+        width: int = 900,
+        height: int = 460,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        How much of each model's attribution among its top bins comes from
+        bins acting jointly rather than on their own: the off-diagonal SHAP
+        interaction attribution as a share of the total, one bar per organism
+        and study. The strongest pair of bins in each model is in the hover.
+
+        A share near zero means the bins add up independently; the higher it
+        is, the more the model's signal lies in combinations of bins. With a
+        ``file_prefix`` the shares and strongest pairs are also written as CSV.
+        """
+        rows = []
+        for (organism, study), model in interactions.groupby(["organism", "study"]):
+            own = model["bin_a"] == model["bin_b"]
+            main = model.loc[own, "mean_abs_interaction"].sum()
+            joint = model.loc[~own, "mean_abs_interaction"].sum()
+            pairs = model.loc[model["bin_a"] < model["bin_b"]].sort_values(
+                ["mean_abs_interaction", "bin_a", "bin_b"], ascending=[False, True, True]
+            )
+            strongest = pairs.iloc[0]
+            rows.append({
+                "organism": organism,
+                "study": study,
+                "share": joint / (main + joint),
+                "strongest_pair": f"{strongest['bin_a']} &times; {strongest['bin_b']}",
+                "strongest_over_main": strongest["mean_abs_interaction"] / model.loc[own, "mean_abs_interaction"].max(),
+            })
+        summary = pd.DataFrame(rows)
+        if file_prefix is not None:
+            summary.assign(strongest_pair=summary["strongest_pair"].str.replace(" &times; ", " x ")).to_csv(
+                file_prefix + ".csv", index=False
+            )
+        labels = [study.label for study in self.studies]
+
+        fig = px.bar(
+            data_frame=summary,
+            x="organism",
+            y="share",
+            color="study",
+            barmode="group",
+            template=TEMPLATE,
+            color_discrete_map=group_colors(labels),
+            category_orders={"study": labels, "organism": organism_order(summary["organism"])},
+            labels={
+                "organism": "Organism",
+                "share": "Share of attribution from bin interactions",
+                "study": "Study",
+                "strongest_over_main": "Strongest pair / strongest main effect",
+                "strongest_pair": "Strongest pair",
+            },
+            hover_data={"share": ":.2f", "strongest_pair": True, "strongest_over_main": ":.2f"},
+            title="How much each model relies on bins acting together",
+            width=width,
+            height=height,
+        )
+        fig.update_yaxes(range=[0, min(1.0, summary["share"].max() * 1.3)], tickformat=".0%")
+        fig.update_xaxes(title_text="", tickangle=-25)
+        fig.update_layout(
+            bargroupgap=0.05,
+            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
+            margin=dict(t=95, b=130),
+        )
+        fig.add_annotation(
+            text="Attribution among each model's ten most important bins, split into main effects and pairwise interactions",
+            x=0.5, xref="paper", y=0, yref="paper", yshift=-105, showarrow=False,
+            font=dict(size=11, color="#555555"),
+        )
         save_image(fig, file_prefix)
         return fig
 

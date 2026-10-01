@@ -8,7 +8,7 @@ analysis reads the same way.
 
 from __future__ import annotations
 
-from typing import List
+from typing import Iterable, List, Sequence
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,64 @@ ASSOCIATION_COLORS = {
     "Positively associated": CASE_COLOR,
     "Negatively associated": CONTROL_COLOR,
 }
+
+
+def enrich_organisms(
+    foreground: Iterable[tuple],
+    universe: Iterable[tuple],
+    organisms: Sequence[str],
+    alternative: str = "greater",
+) -> pd.DataFrame:
+    """
+    Test whether each organism contributed more (pangenome, bin) pairs to
+    ``foreground`` than its share of ``universe``, the pairs that could have
+    been in it. Fisher's exact test per organism, FDR-corrected across the
+    organisms given.
+
+    Returns one row per organism: its bins in the foreground and in the
+    background, the totals, the odds ratio, and the p- and q-values.
+    """
+    from collections import Counter
+
+    from scipy import stats
+    from statsmodels.stats.multitest import multipletests
+
+    foreground, universe = set(foreground), set(universe)
+    untested = foreground - universe
+    if untested:
+        raise ValueError(
+            f"{len(untested)} of the foreground bins are not in the universe, "
+            f"e.g. {sorted(untested)[0]}"
+        )
+    foreground_counts = Counter(organism for organism, _ in foreground)
+    universe_counts = Counter(organism for organism, _ in universe)
+    n_foreground = len(foreground)
+    n_background = len(universe) - n_foreground
+
+    rows = []
+    for organism in organisms:
+        in_foreground = foreground_counts.get(organism, 0)
+        in_background = universe_counts.get(organism, 0) - in_foreground
+        odds_ratio, pvalue = stats.fisher_exact(
+            [
+                [in_foreground, in_background],
+                [n_foreground - in_foreground, n_background - in_background],
+            ],
+            alternative=alternative,
+        )
+        rows.append({
+            "organism": organism,
+            "n_foreground": in_foreground,
+            "n_background": in_background,
+            "n_foreground_total": n_foreground,
+            "n_background_total": n_background,
+            "odds_ratio": odds_ratio,
+            "pvalue": pvalue,
+        })
+    df = pd.DataFrame(rows)
+    df["qvalue"] = multipletests(df["pvalue"], method="fdr_bh")[1]
+    # Organisms contributing no bins all share a p-value of 1
+    return df.sort_values(["pvalue", "organism"]).reset_index(drop=True)
 
 
 def plot_enrichment(
@@ -104,6 +162,10 @@ def plot_enrichment(
         )
 
     fig.add_vline(x=0, row=1, col=2, **ZERO_LINE)
+    # px applied category_orders to its own figure; the traces copied from it
+    # carry no axis order, so it is set again here, first category at the top
+    if order is not None:
+        fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(order)))
     if mark == "qvalue":
         upper = float(np.nanmax(df["log2_odds_ratio"])) if df["log2_odds_ratio"].notna().any() else 1.0
         fig.update_xaxes(range=[min(0.0, float(np.nanmin(df["log2_odds_ratio"]))), upper * 1.45], row=1, col=2)

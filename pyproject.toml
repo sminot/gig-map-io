@@ -39,6 +39,7 @@ dependencies = [
   "lzstring>=1.0", # encoding tree state into a Newick viewer link
   "kaleido>=0.2", # static image export from plotly figures
   "pillow>=10.0", # trimming whitespace from the exported PNGs
+  "pypdf>=4.0", # placing the exported PDFs as panels of one figure
 ]
 
 [project.optional-dependencies]

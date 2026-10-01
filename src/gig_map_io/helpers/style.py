@@ -9,7 +9,7 @@ whether a group is the case-like or the control-like side of a contrast.
 
 from __future__ import annotations
 
-from typing import Dict, Sequence
+from typing import Dict, List, Sequence
 
 import plotly.express as px
 import plotly.graph_objects as go
@@ -75,6 +75,14 @@ pio.templates["gig_map"] = go.layout.Template(
 pio.templates.default = TEMPLATE
 
 
+def organism_order(organisms: Sequence[str]) -> List[str]:
+    """
+    Organisms in the one order every figure lists them in: alphabetical by
+    display name, so "R. gnavus" precedes "Roseburia".
+    """
+    return sorted(set(organisms))
+
+
 def organism_colors(organisms: Sequence[str]) -> Dict[str, str]:
     """
     A colour for each organism, assigned by name so that the same organism is
@@ -82,7 +90,7 @@ def organism_colors(organisms: Sequence[str]) -> Dict[str, str]:
     """
     return {
         name: QUALITATIVE[i % len(QUALITATIVE)]
-        for i, name in enumerate(sorted(set(organisms)))
+        for i, name in enumerate(organism_order(organisms))
     }
 
 
