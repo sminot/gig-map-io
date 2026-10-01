@@ -329,14 +329,17 @@ class ContrastMetagenomesSet(DatasetDict):
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
-        How often two analyses call the same bin, against how often they would
-        by chance.
+        Whether two analyses agree on the direction of the bins they both call.
 
         Every bin falls into one of nine categories: each analysis called it
         lower in cases, higher in cases, or not significant. The bars give the
         observed count of each category beside the count expected if the two
-        analyses were independent, which is what the chi-squared test in the
-        title compares.
+        analyses were independent. The test in the title is narrower than
+        that table: among the bins both analyses call, it asks whether they
+        agree on the direction more often than the coin flip independence
+        would give, as a two-sided binomial test. An omnibus chi-squared test
+        over all nine cells is dominated by the bins neither analysis calls,
+        and answers a question nobody asked.
 
         The categories are ordered by what they mean rather than by their
         position in the contingency table -- agreement first, then
@@ -362,11 +365,15 @@ class ContrastMetagenomesSet(DatasetDict):
             aggfunc="count",
             fill_value=0,
         ).reindex(index=SIG_LEVELS, columns=SIG_LEVELS, fill_value=0)
-        _, pvalue, _, _ = stats.chi2_contingency(observed)
-        # Computed from the margins rather than taken from chi2_contingency,
-        # which drops any row or column that is entirely empty and would then
-        # not line up with the nine bars
         expected = expected_counts(observed)
+
+        agree = int(observed.loc["<", "<"] + observed.loc[">", ">"])
+        both = agree + int(observed.loc["<", ">"] + observed.loc[">", "<"])
+        if both:
+            pvalue = stats.binomtest(agree, both, 0.5).pvalue
+            subtitle = f"Direction agrees for {agree:,} of the {both:,} bins both call: binomial p = {format_pvalue(pvalue)}"
+        else:
+            subtitle = "No bin is called by both"
 
         ticks, groups, obs, exp = [], [], [], []
         for self_sig, comparator_sig, group in _SIG_CATEGORY_ORDER:
@@ -380,8 +387,8 @@ class ContrastMetagenomesSet(DatasetDict):
             groups=groups,
             observed=obs,
             expected=exp,
-            title=f"Do {self_label} and {comparator_label} flag the same bins?",
-            subtitle=f"chi-squared p = {format_pvalue(pvalue)}",
+            title=f"Do {self_label} and {comparator_label} agree on the bins both call?",
+            subtitle=subtitle,
             y_title="Pangenome bins",
             caption=f"Each tick: direction in <b>{self_label}</b> (upper) "
                     f"and <b>{comparator_label}</b> (lower)",
