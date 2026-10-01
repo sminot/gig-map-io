@@ -181,7 +181,9 @@ def plot_enrichment(
             title_text="", orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom",
         ),
         margin=dict(t=95 if show_legend else 70),
-        xaxis=dict(title="Bins in set"),
+        # Up to ten bins, a gridline per bin reads as a count; past that the
+        # automatic ticks are what is legible
+        xaxis=dict(title="Bins in set", dtick=1 if df["n_foreground"].max() <= 10 else None),
         xaxis2=dict(title=odds_title),
         yaxis=dict(title=axis_title, automargin=True),
     )

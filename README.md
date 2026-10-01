@@ -188,7 +188,18 @@ plotting methods wrote onto one page as lettered panels, laid out left to right
 in a grid of a given number of columns and wrapping into rows. Each panel is
 scaled to its cell's width (optionally spanning several columns) and, if it
 would be too tall, to a height cap, so a tall narrow panel does not stretch its
-row. The vector content of each PDF is kept as is.
+row.
+
+A plotly figure is drawn for the screen, and shrinking its PDF into a 55 mm
+cell leaves the text unreadable. So when the `.json` that `save_image` wrote
+sits beside a panel's PDF, the panel is drawn again for print: on a canvas
+larger than its cell by the ratio of the figure's font size to `font_pt`
+(default 7), then scaled into the cell, so the text lands at `font_pt` and
+everything else keeps its on-screen proportions. A panel may carry its own
+`font_pt`, and `height_mm` to be drawn that tall rather than in the
+proportions it had, which gives a legend room in a narrow cell. A PDF with no
+specification beside it, such as a matplotlib figure drawn in inches, is placed
+as it is. Either way the content stays vector.
 
 ```python
 from gig_map_io.helpers.panels import compose_panels
