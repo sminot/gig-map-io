@@ -1,5 +1,5 @@
-import copy
 import logging
+import re
 from typing import Dict, List
 
 from Bio.Phylo.BaseTree import Tree, Clade
@@ -343,13 +343,20 @@ class Phylogeny:
         return [leaf.name for leaf in node.get_terminals()]
 
     def newick(self, rename: Dict[str, str] | None = None) -> str:
-        """The tree as Newick, with leaves renamed through ``rename`` where it names them."""
-        if not rename:
-            return self.tree.format("newick")
-        tree = copy.deepcopy(self.tree)
-        for leaf in tree.get_terminals():
-            leaf.name = _newick_safe(rename.get(leaf.name, leaf.name))
-        return tree.format("newick")
+        """
+        The tree as Newick, with leaves renamed through ``rename`` where it
+        names them. The renaming is done in the text, since copying a tree of
+        thousands of leaves exceeds the recursion limit.
+        """
+        newick = self.tree.format("newick")
+        for leaf in self.tree.get_terminals():
+            if rename and leaf.name in rename:
+                newick = re.sub(
+                    rf"(?<=[(,]){re.escape(leaf.name)}(?=:)",
+                    _newick_safe(rename[leaf.name]).replace("\\", r"\\"),
+                    newick,
+                )
+        return newick
     def dedup_refseq(self) -> None:
         """
         Drop the GenBank copy of any assembly that is also present as RefSeq.
