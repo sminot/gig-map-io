@@ -2,11 +2,11 @@
 Pangenome base class for gig-map-io.
 """
 
-from functools import cached_property, lru_cache
+from functools import cached_property
 import hashlib
+import logging
 from pathlib import Path
-import sys
-from typing import Any, Dict, List
+from typing import Any, List
 from Bio import Phylo
 import pandas as pd
 import numpy as np
@@ -14,22 +14,37 @@ from plotly import graph_objects as go
 import plotly.express as px
 import matplotlib.pyplot as plt
 from Bio.Phylo.TreeConstruction import DistanceMatrix, DistanceTreeConstructor
-from Bio.Phylo.BaseTree import Tree, Clade
 from plotly.subplots import make_subplots
 
-from ..helpers.sort_dataframe import sort_dataframe
+from ..helpers.clustering import linkage_order
 from ..helpers.save_image import save_image
 from ..helpers.style import PRIMARY, SIMPLE_TEMPLATE, TEMPLATE
 from ..helpers.coords import Coords
+from ..helpers.gene_context import draw_gene_labels, order_rows, plot_gene_context
+from ..helpers.genomes import genbank_duplicates
 from .dataset import Dataset
 from ..helpers.phylogeny import Phylogeny
 
-from logging import getLogger
-import logging
+logger = logging.getLogger(__name__)
 
-logger = getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler(stream=sys.stdout))
+def _largest_cluster(genes: pd.DataFrame, max_gap: int) -> pd.DataFrame:
+    """The longest run of genes, by count, in which no two neighbours are more than ``max_gap`` apart."""
+    ordered = genes.sort_values("start")
+    starts = ordered["start"].values
+    breaks = np.flatnonzero(np.diff(starts) > max_gap) + 1
+    runs = np.split(np.arange(len(ordered)), breaks)
+    best = max(runs, key=lambda run: (len(run), -run[0]))
+    return ordered.iloc[best]
+
+
+def _short_genome_name(genome: str) -> str:
+    """An assembly file name reduced to its accession and strain, e.g. GCF_000210575.1 ASM21057v1."""
+    name = genome.replace("_genomic.fna.gz", "").replace(".fna.gz", "").replace(".fasta", "")
+    parts = name.split("_", 2)
+    if len(parts) == 3 and parts[0] in ("GCA", "GCF"):
+        return f"{parts[0]}_{parts[1]} {parts[2]}"[:34]
+    return name[:34]
+
 
 class Pangenome(Dataset):
     """
@@ -45,20 +60,6 @@ class Pangenome(Dataset):
 
     def __repr__(self) -> str:
         return f"Pangenome(directory={self.directory})"
-
-    def __str__(self) -> str:
-        return f"Pangenome(directory={self.directory})"
-
-    def __format__(self, format_spec: str) -> str:
-        return f"Pangenome(directory={self.directory})"
-
-    @cached_property
-    def unbinned_genes_all_genomes_html(self) -> str:
-        """
-        Gene by genome heatmap HTML loaded from bin_pangenome/heatmap.unbinned_genes_all_genomes.html.
-        """
-        path = self.directory / "bin_pangenome/heatmap.unbinned_genes_all_genomes.html"
-        return path.read_text()
 
     @cached_property
     def gene_bins(self) -> pd.DataFrame:
@@ -79,12 +80,6 @@ class Pangenome(Dataset):
                 )
             )
         )
-
-    def bin_contains_term(self, bin: str, term: str) -> bool:
-        """
-        Check if a bin contains a term, even as a substring.
-        """
-        return self.gene_bins.query(f"bin == '{bin}'")["combined_name"].str.contains(term).any()
 
     @cached_property
     def ani_distances(self) -> pd.DataFrame:
@@ -115,40 +110,11 @@ class Pangenome(Dataset):
         return df
 
     @cached_property
-    def n_bins(self) -> int:
-        """
-        Number of unique (non-null) bins in gene_bins.
-        """
-        return int(self.gene_bins["bin"].dropna().nunique())
-
-    @cached_property
     def bin_names(self) -> list[str]:
         """
         List of unique (non-null) bin names in gene_bins.
         """
         return self.gene_bins["bin"].dropna().unique().tolist()
-
-    @cached_property
-    def n_genes(self) -> int:
-        """
-        Number of genes which are part of bins in the pangenome.
-        """
-        return int(self.gene_bins.dropna(subset=["bin"]).shape[0])
-
-    @cached_property
-    def n_genomes(self) -> int:
-        """
-        Number of genomes in the pangenome.
-        """
-        return int(self.align_genomes["genome"].dropna().nunique())
-
-    @cached_property
-    def align_genomes_long(self) -> pd.DataFrame:
-        """
-        Content of align/genomes.aln.csv.gz (long format).
-        """
-        path = self.directory / "align" / "genomes.aln.csv.gz"
-        return pd.read_csv(path, low_memory=False, index_col=0)
 
     @cached_property
     def genome_content(self) -> pd.DataFrame:
@@ -218,13 +184,8 @@ class Pangenome(Dataset):
         """
 
         # Perform hierarchical clustering on the rows and columns
-        wide_sorted = sort_dataframe(
-            sort_dataframe(
-                self.bin_presence_wide.copy().T,
-                method="ward"
-            ).T,
-            method="ward"
-        )
+        wide = self.bin_presence_wide
+        wide_sorted = wide.iloc[linkage_order(wide.values, method="ward"), linkage_order(wide.values.T, method="ward")]
 
         # Set the edges of the bins so that the widths match the number of genes
         x = [0] + self.bin_size.reindex(wide_sorted.columns.values).cumsum().tolist()
@@ -247,8 +208,6 @@ class Pangenome(Dataset):
                 height=height
             )
         )
-        # If save_image was provided, use the string as the file
-        # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
 
         return fig
@@ -289,7 +248,7 @@ class Pangenome(Dataset):
         """
 
         n_genomes_per_gene = (
-            self.align_genomes_long
+            self.align_genomes
             .reindex(columns=["sseqid", "genome"])
             .drop_duplicates()
             ["sseqid"]
@@ -302,10 +261,9 @@ class Pangenome(Dataset):
             genes_passing_filter, size=n_genes, replace=False
         )
 
-        # Subset the align_genomes_long DataFrame to just the selected genes
         df = (
-            self.align_genomes_long
-            .loc[self.align_genomes_long["sseqid"].isin(genes)]
+            self.align_genomes
+            .loc[self.align_genomes["sseqid"].isin(genes)]
             .assign(
                 gene_position=lambda d: d["qstart"] + d["qend"] / 2
             )
@@ -453,17 +411,15 @@ class Pangenome(Dataset):
             tickvals=[0, 1, 2, 3, 4, 5],
             ticktext=["1", "10", "100", "1k", "10k", "100k"]
         )
-        # If save_image was provided, use the string as the file
-        # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
 
         return fig
 
-    def rarefaction_curve_data(_self, n_reps: int = 10, random_state: int = 42) -> pd.DataFrame:
+    def rarefaction_curve_data(self, n_reps: int = 10, random_state: int = 42) -> pd.DataFrame:
         data = []
         for rep in range(n_reps):
             # Take the bin presence matrix
-            bin_presence = _self.bin_presence_wide.copy()
+            bin_presence = self.bin_presence_wide.copy()
             # Shuffle the rows, in an order that is reproducible across runs
             bin_presence = bin_presence.sample(
                 frac=1, random_state=random_state + rep
@@ -471,7 +427,7 @@ class Pangenome(Dataset):
             # Compute the cumulative sum by column (bin)
             cs = bin_presence.cumsum()
             # For each row, count the number of genes recovered
-            n_genes = (cs > 0) * _self.bin_size
+            n_genes = (cs > 0) * self.bin_size
             data.append(pd.DataFrame(dict(
                 n_genomes=list(range(1, bin_presence.shape[0] + 1)),
                 n_genes=n_genes.sum(axis=1)
@@ -553,8 +509,6 @@ class Pangenome(Dataset):
             dtick=1
         )
 
-        # If save_image was provided, use the string as the file
-        # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
 
         return fig
@@ -601,33 +555,14 @@ class Pangenome(Dataset):
         )
 
         fig, ax = plt.subplots(figsize=(width, height))
-        for ix, r in coords.iterrows():
-
-            ax.annotate(
-                "",
-                xytext=(r['start_x'], 0),
-                xy=(r['stop_x'], 0),
-                arrowprops=dict(arrowstyle="simple")
-            )
-            ax.plot([r['start_x'], r['stop_x']], [0, 0], linewidth=0)
-
-            ax.annotate(
-                '',
-                xytext=((ix + 0.5) / coords.shape[0], text_offset),
-                xy=(np.mean([r['start_x'], r['stop_x']]), text_offset / 5.),
-                arrowprops=dict(arrowstyle="-"),
-                horizontalalignment='left',  # Align text to the right of its position
-                verticalalignment='center'
-            )
-            ax.text(
-                (ix + 0.5) / coords.shape[0],
-                text_offset,
-                r['label'],
-                rotation=90,
-                fontsize=font_size,
-                horizontalalignment='center',
-                verticalalignment='bottom'
-            )
+        draw_gene_labels(
+            ax, coords[["start_x", "stop_x", "label"]].rename(columns={"start_x": "start", "stop_x": "stop"}),
+            x0=0.0, x1=1.0, y=0.0, text_offset=text_offset, font_size=font_size,
+            arrow_height=text_offset / 2,
+        )
+        ax.set_xlim(0, 1)
+        # Room for the size bar below the genes and the start of the labels above
+        ax.set_ylim(-1.6 * text_offset, 1.2 * text_offset)
 
         # The vertial lines work with an increment scaled to the text offset
         vertical_increment = text_offset / 10.
@@ -669,14 +604,134 @@ class Pangenome(Dataset):
 
         ax.axis("off")
 
-        # If save_image was provided, use the string as the file
-        # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
 
         # Optionally save the relative gene coordinates as CSV
         if file_prefix is not None:
             coords.to_csv(file_prefix + ".csv", index=False)
 
+        return fig
+
+    def bin_context_map(
+        self,
+        bin: str,
+        n_genomes: int = 10,
+        flank: int = 8000,
+        max_gap: int = 20000,
+        min_bin_fraction: float = 0.5,
+        width: float = 9.0,
+        font_size: float = 8.0,
+        remove_gene_id: bool = True,
+        remove_org_tag: bool = True,
+        title: str | None = None,
+        file_prefix: str | None = None,
+    ) -> plt.Figure:
+        """
+        The bin's genes with their neighbourhood in the genomes that carry
+        them: the gene map above one row per genome, each row the stretch of
+        contig around the bin with every gene on it drawn as an arrow.
+
+        Contigs carrying at least ``min_bin_fraction`` of the bin's genes are
+        placed in one coordinate space, and the ``n_genomes`` whose contigs
+        span most of the window -- the bin plus ``flank`` bp either side --
+        are shown, one contig per genome, with the GenBank copy of an
+        assembly also present as RefSeq dropped. Rows are ordered by
+        clustering on the genes they carry. With a ``file_prefix`` the genes
+        of every row are also written as CSV.
+
+        A bin's genes need not sit together: the window covers the largest
+        run of them with no gap over ``max_gap`` bp, and the title says how
+        many lie elsewhere.
+        """
+        aln = self.align_genomes
+        in_bin = aln.loc[aln["bin"] == bin].drop_duplicates(["sseqid", "qseqid", "genome"])
+        n_bin_genes = int(self.bin_size[bin])
+        per_contig = in_bin.groupby(["genome", "qseqid"])["sseqid"].nunique()
+        carrying = per_contig.loc[per_contig >= max(2, min_bin_fraction * n_bin_genes)]
+        if carrying.empty:
+            raise ValueError(f"No contig carries {min_bin_fraction:.0%} of {bin}")
+        duplicates = genbank_duplicates(carrying.index.get_level_values("genome"))
+        carrying = carrying.loc[~carrying.index.get_level_values("genome").isin(duplicates)]
+
+        placed = Coords(in_bin.set_index(["genome", "qseqid"]).loc[carrying.index].reset_index())
+        bin_coords = placed.to_df()
+        clustered = _largest_cluster(bin_coords, max_gap)
+        n_elsewhere = len(bin_coords) - len(clustered)
+        bin_coords = clustered
+        bin_lo = float(min(bin_coords["start"].min(), bin_coords["stop"].min()))
+        bin_hi = float(max(bin_coords["start"].max(), bin_coords["stop"].max()))
+        window = (bin_lo - flank, bin_hi + flank)
+
+        labels = self.gene_bins.set_index("gene_id")["gene_label"]
+        bin_genes = bin_coords.assign(
+            label=bin_coords["gene"].map(labels).map(
+                lambda name: self.customize_label(name, remove_gene_id, remove_org_tag)
+            )
+        )
+
+        # Place each carrying contig from its bin genes alone, which is enough
+        # to know how much of the window it spans; the genomes whose contigs
+        # span most of it are kept, one contig each
+        candidates = []
+        for (genome, contig), n_carried in carrying.items():
+            anchors = in_bin.loc[(in_bin["genome"] == genome) & (in_bin["qseqid"] == contig)].set_index("sseqid")
+            transform = placed.fit(anchors["qstart"].to_dict(), anchors["qend"].to_dict())
+            ends = sorted(transform(x) for x in (1, int(anchors["qlen"].iloc[0])))
+            extent = (max(ends[0], window[0]), min(ends[1], window[1]))
+            if extent[1] <= extent[0]:
+                continue
+            candidates.append({
+                "genome": genome, "contig": contig, "n_carried": int(n_carried),
+                "coverage": (extent[1] - extent[0]) / (window[1] - window[0]),
+                "extent": extent, "transform": transform,
+            })
+        candidates.sort(key=lambda row: (-row["coverage"], -row["n_carried"], row["genome"]))
+        chosen, seen = [], set()
+        for row in candidates:
+            if row["genome"] not in seen:
+                chosen.append(row); seen.add(row["genome"])
+            if len(chosen) == n_genomes:
+                break
+
+        # Every gene on each chosen contig, mapped into the shared space
+        on_contigs = aln.set_index(["genome", "qseqid"]).sort_index()
+        for row in chosen:
+            on_contig = on_contigs.loc[(row["genome"], row["contig"])].drop_duplicates("sseqid")
+            transform = row.pop("transform")
+            genes = pd.DataFrame({
+                "gene": on_contig["sseqid"].values,
+                "start": on_contig["qstart"].map(transform).values,
+                "stop": on_contig["qend"].map(transform).values,
+                "bin": on_contig["bin"].values,
+            })
+            genes = genes.loc[(genes[["start", "stop"]].max(axis=1) > window[0]) & (genes[["start", "stop"]].min(axis=1) < window[1])]
+            row["genes"] = genes.assign(in_bin=genes["bin"] == bin).sort_values("start")
+
+        presence = pd.DataFrame(
+            {row["genome"]: {gene: 1 for gene in row["genes"]["gene"]} for row in chosen}
+        ).T.fillna(0).sort_index()
+        by_genome = {row["genome"]: row for row in chosen}
+        ordered = [by_genome[genome] for genome in order_rows(presence)]
+        for row in ordered:
+            row["genome_label"] = _short_genome_name(row["genome"])
+
+        title = title or f"{bin} and its neighbourhood"
+        if n_elsewhere:
+            title += f" ({n_elsewhere} of its {n_bin_genes} genes lie outside this window)"
+        fig = plot_gene_context(
+            bin_genes,
+            [dict(row, genome=row["genome_label"]) for row in ordered],
+            window,
+            title=title,
+            width=width,
+            font_size=font_size,
+        )
+        save_image(fig, file_prefix)
+        if file_prefix is not None:
+            pd.concat([
+                row["genes"].assign(genome=row["genome"], contig=row["contig"], name=lambda d: d["gene"].map(labels))
+                for row in ordered
+            ]).to_csv(file_prefix + ".csv", index=False)
         return fig
 
     def _get_gene_coords(self, bin: str) -> pd.DataFrame:
@@ -733,60 +788,39 @@ class Pangenome(Dataset):
         width: int = 500,
         height: int = 400,
         title: str = "Bin presence by genome",
-        show_ani_tree: bool = True,
-        show_genome_names: bool = False,
         tree_proportion: float = 0.5,
         horizontal_spacing: float = 0.,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
-        Heatmap of bin presence/absence for each genome.
-        Parameters
-        ----------
-        bins: str | List[str]
-            The bins to plot.
-        width: int
-            The width of the figure.
-        height: int
-            The height of the figure.
-        file_prefix: str | None
-            The prefix for the file to save the figure to.
-
-        Returns
-        -------
-        Plotly figure of the heatmap.
+        Which genomes carry each of ``bins``, as a strip of cells beside the
+        genomes' ANI tree, with the genomes in the tree's leaf order.
+        ``tree_proportion`` is the share of the width given to the tree.
         """
-
         if isinstance(bins, str):
             bins = [bins]
 
-        # Get the genomes that this bin is found in
+        tree = self.ani_tree
         df = (
             self.genome_content
             .loc[self.genome_content["bin"].isin(bins)]
             .assign(present=1)
-            .pivot_table(index="genome", columns="bin",values="present")
-            .reindex(index=self.genome_content["genome"].unique(), columns=bins)
+            .pivot_table(index="genome", columns="bin", values="present")
+            .reindex(index=tree.leaves_list, columns=bins)
             .fillna(0)
             .astype(int)
         )
-        df = df[df.index.notnull()]
-
-        left_tree = self.ani_tree
-        df = df.reindex(index=left_tree.leaves_list)
 
         fig = make_subplots(
             rows=1,
-            cols=1 + int(show_ani_tree),
+            cols=2,
             shared_yaxes=True,
             horizontal_spacing=horizontal_spacing,
-            column_widths=[tree_proportion, 1.-tree_proportion] if show_ani_tree else [1.]
+            column_widths=[tree_proportion, 1. - tree_proportion],
         )
-        if show_ani_tree:
-            left_tree.plot_lines(fig, row=1, col=1)
-            left_tree.plot_points(fig, mode="markers", row=1, col=1)
-            fig.update_xaxes(title_text="ANI distance", row=1, col=1)
-
+        tree.plot_lines(fig, row=1, col=1)
+        tree.plot_points(fig, mode="markers", row=1, col=1)
+        fig.update_xaxes(title_text="ANI distance", row=1, col=1)
         fig.add_heatmap(
             z=df.values,
             x=df.columns.values,
@@ -794,9 +828,8 @@ class Pangenome(Dataset):
             colorscale="blues",
             showscale=False,
             row=1,
-            col=1 + int(show_ani_tree)
+            col=2,
         )
-
         fig.update_layout(
             height=height,
             width=width,
@@ -804,21 +837,7 @@ class Pangenome(Dataset):
             title=dict(text=title, x=0.5, xanchor="center"),
             margin=dict(r=20),
         )
-        if show_genome_names:
-            fig.update_yaxes(
-                tickmode="array",
-                tickvals=list(range(df.shape[0])),
-                ticktext=df.index.values,
-                side='right',
-                anchor="x2"
-            )
-        else:
-            fig.update_yaxes(
-                visible=False
-            )
-        
-        # If save_image was provided, use the string as the file
-        # prefix to write out HTML, PDF, PNG, and JSON
+        fig.update_yaxes(visible=False)
         save_image(fig, file_prefix)
         return fig
 

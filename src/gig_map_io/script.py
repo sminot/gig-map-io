@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, Mapping
+from typing import Mapping
 
 from .models.study import Study
 from .models.study_set import StudySet
@@ -97,7 +97,7 @@ class AnalysisScript:
                 f"--{name.replace('_', '-')}",
                 type=Path,
                 default=DEFAULT_ANALYSIS_DIR / default,
-                help=f"Input read from an earlier step (default: %(default)s)",
+                help="Input read from an earlier step (default: %(default)s)",
             )
 
         self.args = parser.parse_args(argv)
@@ -105,8 +105,6 @@ class AnalysisScript:
         self.studies_dir: Path = self.args.studies
         self.output_dir: Path = self.args.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-
-    # --- Inputs -----------------------------------------------------------
 
     def study(self, name: str) -> Study:
         """Load one study definition by name."""
@@ -136,8 +134,6 @@ class AnalysisScript:
             raise FileNotFoundError(f"Input {name!r} not found at {path}")
         return path
 
-    # --- Outputs ----------------------------------------------------------
-
     def output(self, name: str) -> str:
         """
         A file prefix under the output directory, for the plotting methods to
@@ -148,13 +144,3 @@ class AnalysisScript:
     def output_path(self, name: str) -> Path:
         """A single output file under the output directory."""
         return self.output_dir / name
-
-    def describe(self) -> Dict[str, object]:
-        """What this script reads and where it writes, for introspection."""
-        return {
-            "script": str(self.script),
-            "inputs": self.declared_inputs,
-            "datasets": str(self.datasets),
-            "studies": str(self.studies_dir),
-            "output_dir": str(self.output_dir),
-        }

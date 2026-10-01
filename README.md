@@ -26,7 +26,7 @@ workflow (genes-in-genomes map) and running the analyses built on them.
   plots and contrast comparisons, pangenome summaries and gene maps, community
   ordination and PERMANOVA, Leiden community types, and supervised models with
   SHAP attribution. Every plotting method takes a `file_prefix` and writes PNG,
-  trimmed PNG, PDF, HTML and JSON.
+  trimmed PNG, PDF, HTML and JSON (PNG and PDF for the matplotlib gene maps).
 
 ## Installation
 
@@ -157,6 +157,18 @@ study.bin_abundance_heatmap(bins.index, file_prefix=script.output("figure"))
 
 It exposes `--datasets`, `--studies`, `--output-dir`, and one option per
 declared input, each defaulting to where that thing sits in a checkout.
+
+## Gene maps and their context
+
+`Pangenome.bin_gene_map` draws the genes of one bin along a line, placed by
+their median position across the contigs that carry them.
+`Pangenome.bin_context_map` puts that map over one row per genome: the stretch
+of contig around the bin with every gene on it drawn as an arrow, coloured by
+gene identity so that conserved synteny shows as columns of matching colour,
+with the bin's genes outlined. The genomes whose contigs span most of the
+window are shown, a GenBank copy of a RefSeq assembly is dropped, and rows are
+ordered by clustering on the genes they carry. Both use `helpers.coords.Coords`
+to build the shared coordinate space.
 
 ## Multi-panel figures
 

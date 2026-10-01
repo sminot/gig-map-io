@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import leaves_list, linkage
+from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import pdist
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
@@ -54,33 +54,13 @@ def leiden(
     Returns
     -------
     pd.Series
-        Integer cluster labels (0-indexed), indexed to match ``df``.
-        Series name is ``"leiden"``.
+        Cluster labels "Cluster 1", "Cluster 2", ... indexed to match ``df``.
 
-    Raises
-    ------
-    ImportError
-        If ``leidenalg`` or ``igraph`` are not installed.
-    ValueError
-        If ``df`` contains NaN or infinite values after optional scaling.
-
-    Notes
-    -----
-    Install dependencies with::
-
-        pip install leidenalg igraph scikit-learn
-
-    The number of clusters is not specified directly — it emerges from
-    ``resolution`` and the graph topology. Run with a range of ``resolution``
-    values and inspect cluster sizes to find a suitable granularity.
+    The number of clusters is not specified directly: it emerges from
+    ``resolution`` and the graph topology.
     """
-    try:
-        import igraph as ig
-        import leidenalg
-    except ImportError as e:
-        raise ImportError(
-            "leidenalg and igraph are required: pip install leidenalg igraph"
-        ) from e
+    import igraph as ig
+    import leidenalg
 
     X = df.values
     if scale:
@@ -125,22 +105,22 @@ def leiden(
     return clusters
 
 
-def linkage_order(matrix: np.ndarray) -> np.ndarray:
+def linkage_order(
+    matrix: np.ndarray,
+    metric: str = "euclidean",
+    method: str = "average",
+    optimal: bool = False,
+) -> np.ndarray:
     """
-    Return row indices sorted by average-linkage hierarchical clustering.
-
-    Parameters
-    ----------
-    matrix : np.ndarray
-        2D array with observations as rows and features as columns.
-        Euclidean distance is used.
-
-    Returns
-    -------
-    np.ndarray
-        Integer indices that reorder rows by cluster proximity.
+    Row indices in the order hierarchical clustering leaves them, so that
+    similar rows sit together. ``optimal`` reorders the leaves to minimise
+    the distance between neighbours, which costs more but reads better.
+    Fewer than two rows come back as they are.
     """
     if matrix.shape[0] < 2:
         return np.arange(matrix.shape[0])
-    Z = linkage(pdist(matrix, metric='euclidean'), method='average')
-    return leaves_list(Z)
+    distances = pdist(matrix, metric=metric)
+    tree = linkage(distances, method=method)
+    if optimal:
+        tree = optimal_leaf_ordering(tree, distances)
+    return leaves_list(tree)

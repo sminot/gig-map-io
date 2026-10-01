@@ -26,8 +26,11 @@ from .pangenome_set import PangenomeSet
 from .phylogeny import PangenomePhylogeny
 from .phylogeny_set import PangenomePhylogenySet
 from .sample_group import SampleGroup
-from ..helpers.enrichment import ASSOCIATION_COLORS, enrich_organisms, plot_enrichment
-from ..helpers.style import organism_order
+from ..helpers.enrichment import enrich_organisms, plot_enrichment
+from ..helpers.style import ESTIMATE_THRESH, FDR_THRESH, organism_order
+
+#: The two sets the significant bins are split into, by the sign of their effect
+DIRECTIONS = {"Positively associated": "positive", "Negatively associated": "negative"}
 
 
 class Study:
@@ -79,7 +82,6 @@ class Study:
         if self.contrast_dirs and self.parameter is None:
             raise ValueError(f"Study {name!r} defines contrasts but no parameter")
 
-    # --- Serialization ----------------------------------------------------
 
     @classmethod
     def from_json(cls, path: str | Path, datasets: str | Path = "datasets") -> "Study":
@@ -138,7 +140,6 @@ class Study:
             f"organisms={len(self.organisms)})"
         )
 
-    # --- Reader objects ---------------------------------------------------
 
     def _resolve(self, dirs: Dict[str, str]) -> Dict[str, Path]:
         return {name: self.datasets / path for name, path in dirs.items()}
@@ -178,11 +179,6 @@ class Study:
     def phylogeny(self, organism: str) -> PangenomePhylogeny:
         return self.phylogenies[organism]
 
-    # --- Sample metadata --------------------------------------------------
-
-    @property
-    def n_samples(self) -> int:
-        return self.contrasts.n_samples
 
     def sample_metadata(self, groups: Iterable[str] | None = None) -> pd.DataFrame:
         """
@@ -203,7 +199,6 @@ class Study:
         """Category order declared for one sample group."""
         return list(self.sample_groups[group].order)
 
-    # --- Association results ----------------------------------------------
 
     @property
     def association(self) -> pd.DataFrame:
@@ -211,8 +206,8 @@ class Study:
 
     def significant_bins(
         self,
-        estimate_thresh: float = 0.25,
-        fdr_thresh: float = 0.2,
+        estimate_thresh: float = ESTIMATE_THRESH,
+        fdr_thresh: float = FDR_THRESH,
         direction: str | None = None,
     ) -> pd.DataFrame:
         """
@@ -255,21 +250,16 @@ class Study:
             self.association[["pangenome", "feature"]], names=["pangenome", "bin"]
         )
 
-    def significant_bins_by_direction(
-        self,
-        estimate_thresh: float = 0.25,
-        fdr_thresh: float = 0.2,
-    ) -> Dict[str, pd.MultiIndex]:
+    def significant_bins_by_direction(self) -> Dict[str, pd.MultiIndex]:
         """
         The significant bins split by the direction of their effect, as a map
         of label to (pangenome, bin) pairs.
         """
         return {
-            label: self.significant_bins(estimate_thresh, fdr_thresh, direction).index
-            for label, direction in zip(ASSOCIATION_COLORS, ["positive", "negative"])
+            label: self.significant_bins(direction=direction).index
+            for label, direction in DIRECTIONS.items()
         }
 
-    # --- Enrichment among a set of bins ------------------------------------
 
     def find_enriched_organisms(
         self,
@@ -291,74 +281,47 @@ class Study:
         index = features.index if isinstance(features, pd.DataFrame) else features
         return enrich_organisms(index, self.tested_bins, self.organisms, alternative)
 
-    def organism_enrichment(
-        self,
-        groups: Dict[str, pd.MultiIndex] | None = None,
-        alternative: str = "greater",
-        **thresholds: float,
-    ) -> pd.DataFrame:
+    def organism_enrichment(self) -> pd.DataFrame:
         """
-        Organism enrichment for several sets of bins at once, tested
-        independently and labelled by a ``group`` column.
-
-        Defaults to the significant bins split by direction of effect.
+        Organism enrichment among the positively and among the negatively
+        associated bins, tested independently and labelled by a ``group``
+        column.
         """
-        groups = groups if groups is not None else self.significant_bins_by_direction(**thresholds)
         return pd.concat(
             [
-                self.find_enriched_organisms(index, alternative=alternative).assign(group=label)
-                for label, index in groups.items()
+                self.find_enriched_organisms(index).assign(group=label)
+                for label, index in self.significant_bins_by_direction().items()
             ],
             ignore_index=True,
         )
 
-    def annotation_enrichment(
-        self,
-        groups: Dict[str, pd.MultiIndex] | None = None,
-        min_count: int = 2,
-        alternative: str = "greater",
-        **thresholds: float,
-    ) -> pd.DataFrame:
+    def annotation_enrichment(self) -> pd.DataFrame:
         """
-        Annotation term enrichment for several sets of bins at once, tested
-        independently against the bins this study covered and labelled by a
-        ``group`` column.
-
-        Defaults to the significant bins split by direction of effect.
+        Annotation term enrichment among the positively and among the
+        negatively associated bins, tested independently against the bins
+        this study covered and labelled by a ``group`` column.
         """
-        groups = groups if groups is not None else self.significant_bins_by_direction(**thresholds)
         return pd.concat(
             [
-                self.pangenomes.find_enriched_annotation_terms(
-                    index,
-                    min_count=min_count,
-                    alternative=alternative,
-                    universe=self.tested_bins,
-                ).assign(group=label)
-                for label, index in groups.items()
+                self.pangenomes.find_enriched_annotation_terms(index, universe=self.tested_bins).assign(group=label)
+                for label, index in self.significant_bins_by_direction().items()
             ],
             ignore_index=True,
         )
 
     def plot_organism_enrichment(
         self,
-        enrichment: pd.DataFrame | Dict[str, pd.MultiIndex] | None = None,
+        enrichment: pd.DataFrame,
         qvalue_threshold: float = 0.2,
         width: int = 800,
         height: int = 450,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
-        How many bins each organism contributed to each set, and how far that
-        is from its share of the bins this study tested.
-
-        Takes the output of :meth:`organism_enrichment`, a map of label to
-        bins, or nothing at all (in which case the significant bins are split
-        by direction of effect).
+        The output of :meth:`organism_enrichment`: how many bins each organism
+        contributed to each set, and how far that is from its share of the
+        bins this study tested.
         """
-        if not isinstance(enrichment, pd.DataFrame):
-            enrichment = self.organism_enrichment(enrichment)
-
         return plot_enrichment(
             enrichment,
             label="organism",
@@ -373,7 +336,7 @@ class Study:
 
     def plot_annotation_enrichment(
         self,
-        enrichment: pd.DataFrame | Dict[str, pd.MultiIndex] | None = None,
+        enrichment: pd.DataFrame,
         qvalue_threshold: float = 0.2,
         max_terms: int = 20,
         width: int = 900,
@@ -381,17 +344,11 @@ class Study:
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
-        Annotation terms over-represented in each set of bins, relative to the
-        bins this study tested.
-
-        Takes the output of :meth:`annotation_enrichment`, a map of label to
-        bins, or nothing at all (in which case the significant bins are split
-        by direction of effect). The height follows the number of terms shown
+        The output of :meth:`annotation_enrichment`: the terms over-represented
+        in each set of bins, relative to the bins this study tested, up to
+        ``max_terms`` of them. The height follows the number of terms shown
         unless given.
         """
-        if not isinstance(enrichment, pd.DataFrame):
-            enrichment = self.annotation_enrichment(enrichment)
-
         significant = enrichment.loc[enrichment["qvalue"] < qvalue_threshold]
         # Break ties on the term itself, so that which terms make the cut does
         # not depend on the order they happened to be collected in
@@ -413,7 +370,6 @@ class Study:
             file_prefix=file_prefix,
         )
 
-    # --- Pangenome-level plots --------------------------------------------
 
     @cached_property
     def core_genomes(self) -> Dict[str, str]:
@@ -441,10 +397,13 @@ class Study:
     def bin_gene_map(self, organism: str, bin: str, **kwargs: Any) -> go.Figure:
         return self.pangenome(organism).bin_gene_map(bin, **kwargs)
 
+    def bin_context_map(self, organism: str, bin: str, **kwargs: Any):
+        kwargs.setdefault("title", f"{organism} {bin} and its neighbourhood")
+        return self.pangenome(organism).bin_context_map(bin, **kwargs)
+
     def bin_presence_heatmap(self, organism: str, bins, **kwargs: Any) -> go.Figure:
         return self.pangenome(organism).bin_presence_heatmap(bins, **kwargs)
 
-    # --- Contrast-level plots ---------------------------------------------
 
     def volcano_plot(self, **kwargs: Any) -> go.Figure:
         kwargs.setdefault("title", self.label)
@@ -480,10 +439,6 @@ class Study:
             kwargs.setdefault("group_order", order or None)
         return self.contrast(organism).plot_bin_abundance(bin, **kwargs)
 
-    def bin_contingency(self, organism: str, bin: str, **kwargs: Any) -> dict:
-        kwargs.setdefault("metadata_col", self.parameter)
-        return self.contrast(organism).bin_contingency(bin, **kwargs)
-
     def plot_bin_contingency(self, organism: str, bin: str, **kwargs: Any) -> go.Figure:
         kwargs.setdefault("metadata_col", self.parameter)
         kwargs.setdefault("group_labels", self._metadata_group(kwargs["metadata_col"])[0])
@@ -503,24 +458,23 @@ class Study:
                     return dict(source.labels), list(group.order)
         return {}, []
 
-    def _compare(self, method: str, comparitor: "Study", kwargs: dict) -> go.Figure:
+    def _compare(self, method: str, comparator: "Study", kwargs: dict) -> go.Figure:
         kwargs.setdefault("self_label", self.label)
-        kwargs.setdefault("comparitor_label", comparitor.label)
-        return getattr(self.contrasts, method)(comparitor.contrasts, **kwargs)
+        kwargs.setdefault("comparator_label", comparator.label)
+        return getattr(self.contrasts, method)(comparator.contrasts, **kwargs)
 
-    def compare_sig_scatter(self, comparitor: "Study", **kwargs: Any) -> go.Figure:
-        return self._compare("compare_sig_scatter", comparitor, kwargs)
+    def compare_sig_scatter(self, comparator: "Study", **kwargs: Any) -> go.Figure:
+        return self._compare("compare_sig_scatter", comparator, kwargs)
 
-    def compare_sig_categories(self, comparitor: "Study", **kwargs: Any) -> go.Figure:
-        return self._compare("compare_sig_categories", comparitor, kwargs)
+    def compare_sig_categories(self, comparator: "Study", **kwargs: Any) -> go.Figure:
+        return self._compare("compare_sig_categories", comparator, kwargs)
 
-    def compare_association_scatter(self, comparitor: "Study", **kwargs: Any) -> go.Figure:
-        return self._compare("compare_association_scatter", comparitor, kwargs)
+    def compare_association_scatter(self, comparator: "Study", **kwargs: Any) -> go.Figure:
+        return self._compare("compare_association_scatter", comparator, kwargs)
 
-    def compare_volcano_with_estimate(self, comparitor: "Study", **kwargs: Any) -> go.Figure:
-        return self._compare("compare_volcano_with_estimate", comparitor, kwargs)
+    def compare_volcano_with_estimate(self, comparator: "Study", **kwargs: Any) -> go.Figure:
+        return self._compare("compare_volcano_with_estimate", comparator, kwargs)
 
-    # --- Bin descriptions -------------------------------------------------
 
     def describe_bins(
         self,

@@ -1,13 +1,18 @@
+import logging
+from typing import Dict, List
+
 from Bio.Phylo.BaseTree import Tree, Clade
 import pandas as pd
 import numpy as np
 from scipy import stats
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from typing import Dict, List
 
+from .genomes import genbank_duplicates
 from .save_image import save_image
 from .style import SIMPLE_TEMPLATE
+
+logger = logging.getLogger(__name__)
 
 
 class Phylogeny:
@@ -71,21 +76,14 @@ class Phylogeny:
         if clade.is_terminal():
             y=np.mean([start, stop])
 
-        # If it's an internal node
+        # An internal node sits at the mean of its children, each of which
+        # takes a share of the span proportional to its leaves
         else:
-            # See how much space we have to work with
-            range = stop - start
-
-            # Keep a pointer to the y coordinate which will increase
-            # with each child
+            span = stop - start
             previous_y = start
-
             child_ys = []
-
-            # Iterate over each child (there may be more than 1)
             for child in clade.clades:
-                # Calculate the new y based on its relative size
-                new_y = previous_y + (range * len(child.get_terminals()) / len(clade.get_terminals()))
+                new_y = previous_y + (span * len(child.get_terminals()) / len(clade.get_terminals()))
 
                 self._add_coord(
                     child,
@@ -108,29 +106,6 @@ class Phylogeny:
         for child in clade.clades:
             if not child.is_terminal():
                 self._get_children(child)
-
-    def plot(self):
-        # Set up a figure
-        fig = make_subplots(rows=1, cols=1)
-
-        self.plot_lines(fig)
-        self.plot_points(fig, mode="markers+text")
-        fig.update_layout(
-            template=SIMPLE_TEMPLATE,
-            yaxis=dict(
-                visible=False,
-                showticklabels=False,
-                showgrid=False,
-                zeroline=False
-            ),
-            xaxis=dict(
-                automargin=True,
-                title_text="SNP rate"
-            ),
-            margin=dict(l=100, r=400, b=100, t=100),
-            title_text=self.name,
-        )
-        return fig
 
     def plot_lines(self, fig, row=1, col=1, y_offset=0):
 
@@ -202,22 +177,17 @@ class Phylogeny:
             )
 
     def align_trees(self, comp: 'Phylogeny'):
-        print(f"Aligning {self.name} to {comp.name}")
-
-        made_switch = True
+        """Swap children at internal nodes wherever that brings the leaf order closer to ``comp``'s."""
+        logger.info("Aligning %s to %s", self.name, comp.name)
         for _ in range(50):
             made_switch = False
             for node in self.tree.get_nonterminals():
-                # Try exchanging every pair of nodes
-                for i in range(len(node.clades)-1):
-                    for j in range(i, len(node.clades)):
+                for i in range(len(node.clades) - 1):
+                    for j in range(i + 1, len(node.clades)):
                         score = self._score_tree_alignment(comp)
                         node.clades[i], node.clades[j] = node.clades[j], node.clades[i]
-                        new_score = self._score_tree_alignment(comp)
-
-                        if new_score > score:
+                        if self._score_tree_alignment(comp) > score:
                             made_switch = True
-                            print(f"Kept new order - {node.name} {i} <-> {j}")
                         else:
                             node.clades[i], node.clades[j] = node.clades[j], node.clades[i]
             if not made_switch:
@@ -252,41 +222,25 @@ class Phylogeny:
         comp: 'Phylogeny',
         height: int,
         width: int,
-        scale_by: str,
-        align_tree_a: bool,
         file_prefix: str | None = None
     ):
-        print(f"Calculating concordance: {self.name} vs. {comp.name}")
-        concordance = self._calc_concordance(comp)
-
-        # If there are fewer than 3 leafs, this cannot take place
-        if concordance is None:
-            raise ValueError("Not enough shared genomes to compare.")
-
-        # Align the two trees against each other
-        if align_tree_a:
-            self.align_trees(comp)
-        comp.align_trees(self)
-
-        if align_tree_a:
-            self.align_trees(comp)
-            comp.align_trees(self)
-            self.align_trees(comp)
-            comp.align_trees(self)
-
-        # Regenerate the coordinates
-        print(f"Regenerating coordinates")
-        self.find_coords()
-        comp.find_coords()
-
-        # Get the list of nodes which are found in common
+        """
+        A tanglegram: this tree on the left, ``comp`` on the right with its
+        leaves reordered to follow this one, and the shared leaves joined.
+        """
         # Sorted, not merely deduplicated: this order is the order the tracer
         # lines are added to the figure, and set iteration order varies between
         # processes, which made the saved figure specification differ run to run.
         shared_nodes = sorted(set(self._get_leafs(self.tree)) & set(comp._get_leafs(comp.tree)))
+        if len(shared_nodes) < 3:
+            raise ValueError("Not enough shared genomes to compare.")
 
-        # If the user wants to scale the total trees to be the same, just adjust the comp coordinates
-        if scale_by == "Total Span" and len(shared_nodes) > 1:
+        comp.align_trees(self)
+        self.find_coords()
+        comp.find_coords()
+
+        # Scale the comparison tree so that the shared leaves span the same height
+        if len(shared_nodes) > 1:
 
             # Get the y-span for just the shared nodes
             self_shared_y = [self.coords[node]['y'] for node in shared_nodes]
@@ -384,54 +338,8 @@ class Phylogeny:
         return fig
 
 
-    def _calc_concordance(self, comp: 'Phylogeny'):
-        """
-        Concordance: Spearman correlation of distances for all shared nodes.
-        Nodes are shared if both trees contain a node with the same set of leafs.
-        """
-        # Get the shared set of leafs for both trees
-        shared_leafs = sorted(set(self._get_leafs(self.tree)) & set(self._get_leafs(comp.tree)))
-        # If there are fewer than 3 shared leafs, return null
-        if len(shared_leafs) < 3:
-            return
-
-        # Get the vector of pairwise distances for this bin
-        dists1 = [
-            self.distances[name1][name2]
-            for name1 in shared_leafs
-            for name2 in shared_leafs
-            if name1 < name2
-        ]
-        # And the comparitor
-        dists2 = [
-            comp.distances[name1][name2]
-            for name1 in shared_leafs
-            for name2 in shared_leafs
-            if name1 < name2
-        ]
-
-        # Calculate the spearman correlation
-        r = stats.spearmanr(dists1, dists2)
-        return r.statistic
-
     def _get_leafs(self, node: Tree):
         return [leaf.name for leaf in node.get_terminals()]
-
-    def _get_node_terminals(self, tree: Tree, shared_leafs: set):
-        nodes = [
-            set(self._get_leafs(node))
-            for node in tree.get_nonterminals()
-            if len(node.get_terminals()) > 1
-        ]
-
-        # Only keep the shared leafs (genomes)
-        nodes = [
-            frozenset(node & shared_leafs)
-            for node in nodes
-            if len(node & shared_leafs) > 1
-        ]
-
-        return set(nodes)
 
     def newick(self) -> str:
         """
@@ -447,10 +355,5 @@ class Phylogeny:
         identical leaves, which clutters a tanglegram.
         """
         leaves = {leaf.name: leaf for leaf in self.tree.get_terminals()}
-        for name in leaves:
-            if not name.startswith("GCF_"):
-                continue
-            genbank_id = "GCA_" + name[4:].split("_")[0]
-            for other_name, other_leaf in leaves.items():
-                if other_name.startswith(genbank_id):
-                    self.tree.prune(other_leaf)
+        for name in genbank_duplicates(leaves):
+            self.tree.prune(leaves[name])

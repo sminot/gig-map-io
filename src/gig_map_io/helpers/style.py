@@ -52,6 +52,14 @@ THRESHOLD_LINE = dict(line_color="#c0392b", line_width=1, line_dash="dash")
 #: Marker opacity for scatter plots dense enough that points overlap.
 DENSE_MARKER_OPACITY = 0.7
 
+#: A horizontal legend centred above the plot area.
+TOP_LEGEND = dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom")
+
+#: The thresholds that make a bin significant: the smallest effect size and
+#: the largest FDR-adjusted q-value.
+ESTIMATE_THRESH = 0.25
+FDR_THRESH = 0.2
+
 pio.templates["gig_map"] = go.layout.Template(
     layout=dict(
         font=dict(family="Helvetica, Arial, sans-serif", size=13, color="#222222"),
@@ -105,3 +113,12 @@ def group_colors(order: Sequence[str]) -> Dict[str, str]:
         return {order[0]: CASE_COLOR, order[1]: CONTROL_COLOR}
     palette = QUALITATIVE if len(order) <= len(QUALITATIVE) else LARGE_QUALITATIVE
     return {name: palette[i % len(palette)] for i, name in enumerate(order)}
+
+
+def legend_above(fig: go.Figure, offset_px: int = 30) -> None:
+    """
+    Put the legend above the plot, clear of the facet titles that plotly
+    express draws at the top of the first facet. Needs the figure's height to
+    be set already.
+    """
+    fig.update_layout(legend=dict(TOP_LEGEND, y=1 + offset_px / fig.layout.height))

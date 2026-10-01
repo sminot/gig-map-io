@@ -4,10 +4,15 @@ PERMANOVA over a sample-by-feature table, one metadata variable at a time.
 
 from __future__ import annotations
 
+import logging
+import warnings
+
 import pandas as pd
 from scipy.spatial.distance import pdist, squareform
 from skbio.stats.distance import DistanceMatrix
 from skbio.stats.distance import permanova as skbio_permanova
+
+logger = logging.getLogger(__name__)
 
 
 def permanova(
@@ -52,28 +57,25 @@ def permanova(
           - n_groups      : number of unique groups
           - n_samples     : samples used (after dropping NaN for that column)
     """
-    # --- Align indices -----------------------------------------------------
     shared_idx = scalars_df.index.intersection(metadata_df.index)
     if len(shared_idx) == 0:
         raise ValueError("scalars_df and metadata_df share no common index values.")
     if len(shared_idx) < len(scalars_df):
-        print(f"Warning: {len(scalars_df) - len(shared_idx)} sample(s) dropped — not present in both DataFrames.")
+        warnings.warn(f"{len(scalars_df) - len(shared_idx)} sample(s) dropped: not present in both DataFrames.")
 
     scalars_df  = scalars_df.loc[shared_idx]
     metadata_df = metadata_df.loc[shared_idx]
 
-    # --- Drop samples missing any metadata column -------------------------
     complete_mask = metadata_df.notna().all(axis=1)
     n_dropped = (~complete_mask).sum()
     if n_dropped > 0:
-        print(f"Warning: {n_dropped} sample(s) dropped due to missing metadata.")
+        warnings.warn(f"{n_dropped} sample(s) dropped due to missing metadata.")
     scalars_df  = scalars_df.loc[complete_mask]
     metadata_df = metadata_df.loc[complete_mask]
 
     if len(scalars_df) < 3:
         raise ValueError("Fewer than 3 complete samples remain after dropping missing values.")
 
-    # --- Build distance matrix once on the complete sample set ------------
     dist_sq = squareform(pdist(scalars_df.values, metric=distance_metric))
     all_ids = scalars_df.index.astype(str).tolist()
     skbio_dm = DistanceMatrix(dist_sq, ids=all_ids)
@@ -85,7 +87,7 @@ def permanova(
         n_groups = grouping.nunique()
 
         if n_groups < 2:
-            print(f"Skipping '{col}': only one unique group value.")
+            logger.info("Skipping %r: only one unique group value", col)
             continue
 
         result = skbio_permanova(

@@ -12,65 +12,48 @@ from plotly.subplots import make_subplots
 
 from .clustering import linkage_order
 from .save_image import save_image
-from .style import NEUTRAL, PRIMARY, QUALITATIVE, TEMPLATE, ZERO_LINE, group_colors
+from .sidebar import add_category_sidebar
+from .style import NEUTRAL, PRIMARY, QUALITATIVE, TEMPLATE, TOP_LEGEND, ZERO_LINE, group_colors
+
+
+def log2_odds(pos_a: int, neg_a: int, pos_b: int, neg_b: int) -> float | None:
+    """
+    The log2 odds of being positive in group A against group B, or ``None``
+    when any cell of the 2x2 table is empty and the ratio is undefined.
+    """
+    if min(pos_a, neg_a, pos_b, neg_b) == 0:
+        return None
+    return float(np.log2((pos_a * neg_b) / (neg_a * pos_b)))
 
 
 def plot_feature_positivity(
     rpkm: pd.DataFrame,
     grouping: pd.Series,
+    group_order: list,
     threshold: float = 100,
     normalize: bool = False,
-    height: int = 500,
     width: int = 800,
+    height: int = 500,
     file_prefix: str | None = None,
     legend_title: str | None = None,
-    group_order: list | None = None,
 ) -> go.Figure:
     """
-    Bar plot of samples by number of features exceeding a positivity threshold.
+    Samples by how many features they carry, for two groups.
 
-    For each value of N, the bar height is the number of samples in that group
-    that have at least N features with a value >= ``threshold``.  This gives a
-    cumulative view of how positivity accumulates across samples.
-
-    Parameters
-    ----------
-    rpkm : pd.DataFrame
-        Feature matrix. Rows are observations, columns are features.
-        Index must overlap with ``grouping.index``.
-    grouping : pd.Series
-        Categorical group label for each observation.
-        Index must overlap with ``rpkm.index``.
-    threshold : float
-        Minimum value a feature must reach to be counted as positive.
-        Default: 100.
-    normalize : bool
-        If True, y-axis shows the fraction of each group's samples (0–1)
-        rather than raw counts. Default: False.
-    height : int
-        Figure height in pixels. Default: 500.
-    width : int
-        Figure width in pixels. Default: 800.
-    group_order : list, optional
-        The groups in display order, the first being the case-like one; sets
-        their colours.
-
-    Returns
-    -------
-    plotly.graph_objects.Figure
-        Grouped bar chart with N features on the x-axis, sample count on the
-        y-axis, and one bar series per group.
+    For each cutoff N, the top panel gives how many samples (or what fraction,
+    with ``normalize``) of each group have at least N features at or above
+    ``threshold``; the bottom panel gives the log2 odds of reaching that cutoff
+    in the first group of ``group_order`` against the second.
     """
+    if len(group_order) != 2:
+        raise ValueError("plot_feature_positivity compares exactly two groups")
     shared_idx = rpkm.index.intersection(grouping.index)
-
     positive_counts = (rpkm.loc[shared_idx] >= threshold).sum(axis=1)
     groups = grouping.loc[shared_idx]
-
     max_n = int(positive_counts.max())
-
     group_sizes = groups.groupby(groups).size()
 
-    rows = [
+    plot_df = pd.DataFrame([
         {
             "n_features": n,
             "_group": group,
@@ -79,259 +62,136 @@ def plot_feature_positivity(
         }
         for n in range(max_n + 1)
         for group, group_idx in groups.groupby(groups).groups.items()
-    ]
-
-    plot_df = pd.DataFrame(rows)
-
+    ])
     if normalize:
         plot_df["n_samples"] = plot_df["n_samples"] / plot_df["group_size"]
-
     y_label = "Fraction of samples" if normalize else "Number of samples"
-    tick_vals = list(range(max_n + 1))
+    legend_title = legend_title or grouping.name or "Group"
 
-    order = list(group_order) if group_order else sorted(groups.unique())
-    bar_fig = px.bar(
+    bars = px.bar(
         plot_df,
         x="n_features",
         y="n_samples",
         color="_group",
-        color_discrete_map=group_colors(order),
-        category_orders={"_group": order},
+        color_discrete_map=group_colors(group_order),
+        category_orders={"_group": list(group_order)},
         barmode="group",
-        labels={
-            "n_features": "Minimum number of bins detected",
-            "n_samples": y_label,
-            "_group": legend_title or grouping.name or "Group",
-        },
+        labels={"n_features": "Minimum number of bins detected", "n_samples": y_label, "_group": legend_title},
         template=TEMPLATE,
     )
 
-    # --- Odds ratio subplot (two-group case only) --------------------------
-    if groups.nunique() == 2:
-        group_a, group_b = sorted(groups.unique())
-        size_a = int((groups == group_a).sum())
-        size_b = int((groups == group_b).sum())
+    group_a, group_b = group_order
+    odds = []
+    for n in range(max_n + 1):
+        pos_a = int((positive_counts[groups == group_a] >= n).sum())
+        pos_b = int((positive_counts[groups == group_b] >= n).sum())
+        value = log2_odds(pos_a, group_sizes[group_a] - pos_a, pos_b, group_sizes[group_b] - pos_b)
+        if value is not None:
+            odds.append({"n_features": n, "log2_odds": value})
+    odds = pd.DataFrame(odds)
+    or_label = f"{group_a} vs. {group_b}"
 
-        or_rows = []
-        for n in range(max_n + 1):
-            pos_a = int((positive_counts[groups == group_a] >= n).sum())
-            pos_b = int((positive_counts[groups == group_b] >= n).sum())
-            neg_a = size_a - pos_a
-            neg_b = size_b - pos_b
-            if pos_a > 0 and neg_a > 0 and pos_b > 0 and neg_b > 0:
-                or_rows.append({"n_features": n, "or": (pos_a * neg_b) / (neg_a * pos_b)})
-
-        or_df = pd.DataFrame(or_rows)
-
-        or_df["or"] = np.log2(or_df["or"])
-
-        if or_df["or"].mean() < 0:
-            or_df["or"] = -or_df["or"]
-            or_label = f"{group_b} vs. {group_a}"
-        else:
-            or_label = f"{group_a} vs. {group_b}"
-
-        fig = make_subplots(
-            rows=2, cols=1,
-            shared_xaxes=True,
-            row_heights=[0.6, 0.4],
-            vertical_spacing=0.08,
-        )
-
-        for trace in bar_fig.data:
-            fig.add_trace(trace, row=1, col=1)
-
-        fig.add_trace(
-            go.Bar(
-                x=or_df["n_features"], y=or_df["or"], name=or_label, showlegend=False,
-                marker_color=NEUTRAL,
-            ),
-            row=2, col=1,
-        )
-        fig.add_hline(y=0, row=2, col=1, **ZERO_LINE)
-
-        fig.update_layout(
-            barmode="group",
-            template=TEMPLATE,
-            height=height,
-            width=width,
-            legend=dict(
-                title_text=legend_title or grouping.name or "Group",
-                orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom",
-            ),
-            margin=dict(t=60),
-        )
-        fig.update_yaxes(title_text=y_label, row=1, col=1)
-        fig.update_yaxes(title_text=f"log2 odds ratio<br>({or_label})", row=2, col=1)
-        fig.update_xaxes(
-            title_text="Minimum number of bins detected",
-            tickmode="array",
-            tickvals=tick_vals,
-            row=2, col=1,
-        )
-    else:
-        fig = bar_fig
-        fig.update_layout(height=height, width=width)
-
-    fig.update_xaxes(tickmode="array", tickvals=tick_vals)
-
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.6, 0.4], vertical_spacing=0.08)
+    for trace in bars.data:
+        fig.add_trace(trace, row=1, col=1)
+    fig.add_trace(
+        go.Bar(x=odds["n_features"], y=odds["log2_odds"], name=or_label, showlegend=False, marker_color=NEUTRAL),
+        row=2, col=1,
+    )
+    fig.add_hline(y=0, row=2, col=1, **ZERO_LINE)
+    fig.update_layout(
+        barmode="group",
+        template=TEMPLATE,
+        height=height,
+        width=width,
+        legend=dict(TOP_LEGEND, title_text=legend_title),
+        margin=dict(t=60),
+    )
+    fig.update_yaxes(title_text=y_label, row=1, col=1)
+    fig.update_yaxes(title_text=f"log2 odds ratio<br>({or_label})", row=2, col=1)
+    fig.update_xaxes(tickmode="array", tickvals=list(range(max_n + 1)))
+    fig.update_xaxes(title_text="Minimum number of bins detected", row=2, col=1)
     save_image(fig, file_prefix)
-
     return fig
 
 
 def plot_positivity_heatmap(
     rpkm: pd.DataFrame,
-    grouping: pd.Series | pd.DataFrame,
+    grouping: pd.DataFrame,
+    group_orders: dict[str, list],
     threshold: float = 100,
     width: int = 1200,
     height: int = 800,
     file_prefix: str | None = None,
     show_sample_labels: bool = True,
-    grouping_width: float = 0.2,
-    group_orders: dict[str, list] | None = None,
 ) -> go.Figure:
     """
-    Clustered positivity heatmap with grouping annotations and per-feature OR bars.
+    Which features each sample carries, with the samples annotated.
 
-    Samples and features are ordered by hierarchical clustering. The figure
-    contains three panels:
+    Three panels: the binary heatmap of features (columns) at or above
+    ``threshold`` in each sample (rows), both axes ordered by hierarchical
+    clustering; one column of colour per grouping variable beside it; and
+    above it, for each grouping variable, the log2 odds of carrying each
+    feature in the category that is most enriched for the features against
+    the rest of the samples.
 
-    - **Main heatmap** (top-left): binary positivity (feature value >= threshold)
-      with features on the x-axis and samples on the y-axis.
-    - **Grouping annotation** (right margin, sample axis): one column per
-      grouping variable; each unique category is colour-coded with a legend.
-    - **Log2 OR bars** (bottom margin, feature axis): for each (grouping
-      variable, category), a vertical bar shows the log2 odds ratio of
-      feature positivity for that category versus all other samples.
-
-    Parameters
-    ----------
-    rpkm : pd.DataFrame
-        Feature matrix. Rows are observations, columns are features.
-        Index must overlap with ``grouping.index``.
-    grouping : pd.Series or pd.DataFrame
-        One or more categorical grouping variables. A Series is treated as a
-        single variable. Index must overlap with ``rpkm.index``.
-    threshold : float
-        Minimum value for a feature to be counted as positive. Default: 100.
-    width : int
-        Figure width in pixels. Default: 1200.
-    height : int
-        Figure height in pixels. Default: 800.
-    file_prefix : str or None
-        If provided, saves the figure as .html, .pdf, and .png via
-        ``save_image``. Default: None.
-    group_orders : dict, optional
-        For each grouping variable, its categories in display order, the
-        first being the case-like one; sets their colours.
-
-    Returns
-    -------
-    plotly.graph_objects.Figure
+    ``group_orders`` gives each grouping variable's categories in display
+    order, the first being the case-like one, which sets their colours.
     """
-    if isinstance(grouping, pd.Series):
-        grouping = grouping.to_frame()
-    group_orders = group_orders or {}
-
     shared_idx = rpkm.index.intersection(grouping.index)
-    pos = (rpkm.loc[shared_idx] >= threshold).astype(int)
+    positive = (rpkm.loc[shared_idx] >= threshold).astype(int)
     meta = grouping.loc[shared_idx]
 
-    # --- Cluster-sort samples and features ---------------------------------
-    sample_order = linkage_order(pos.values)
-    feature_order = linkage_order(pos.values.T)
+    positive = positive.iloc[linkage_order(positive.values), linkage_order(positive.values.T)]
+    meta = meta.loc[positive.index]
+    feature_labels = [str(f) for f in positive.columns]
 
-    pos_sorted = pos.iloc[sample_order].iloc[:, feature_order]
-    meta_sorted = meta.iloc[sample_order]
-
-    sample_labels = [str(s) for s in pos_sorted.index]
-    feature_labels = [str(f) for f in pos_sorted.columns]
-
-    # Shared colour map: var_name → {category → colour}
-    # Built once so OR bars and grouping heatmap use identical colours.
-    def _categories(var_name: str) -> list:
+    categories = {}
+    colors = {}
+    for var_name in meta.columns:
         present = set(meta[var_name].dropna().unique())
         if var_name in group_orders:
-            return [cat for cat in group_orders[var_name] if cat in present]
-        return sorted(present)
+            categories[var_name] = [c for c in group_orders[var_name] if c in present]
+            colors[var_name] = group_colors(group_orders[var_name])
+        else:
+            categories[var_name] = sorted(present)
+            colors[var_name] = dict(zip(categories[var_name], QUALITATIVE))
 
-    cat_colors: dict[str, dict] = {
-        var_name: (
-            {cat: color for cat, color in group_colors(group_orders[var_name]).items()}
-            if var_name in group_orders
-            else {cat: QUALITATIVE[i % len(QUALITATIVE)] for i, cat in enumerate(_categories(var_name))}
-        )
-        for var_name in meta.columns
-    }
-
-    # --- Log2 OR per grouping variable per feature -------------------------
-    # For each variable, compute OR for every category vs. rest, then keep
-    # only the category with the highest mean log2 OR across features.
-    or_traces: list[go.Bar] = []
-
-    for var_name in meta.columns:
-        groups_var = meta[var_name]
-        best_cat, best_log2_ors = None, None
-
-        for cat in sorted(groups_var.dropna().unique()):
-            in_cat = groups_var == cat
-            out_cat = groups_var.notna() & (groups_var != cat)
-            log2_ors = []
-            for feat in pos_sorted.columns:
-                col = pos[feat]
-                pos_in  = int(col[in_cat].sum())
-                neg_in  = int(in_cat.sum()) - pos_in
-                pos_out = int(col[out_cat].sum())
-                neg_out = int(out_cat.sum()) - pos_out
-                if pos_in > 0 and neg_in > 0 and pos_out > 0 and neg_out > 0:
-                    log2_ors.append(np.log2((pos_in * neg_out) / (neg_in * pos_out)))
-                else:
-                    log2_ors.append(0.0)
-            if best_log2_ors is None or np.mean(log2_ors) > np.mean(best_log2_ors):
-                best_cat, best_log2_ors = cat, log2_ors
-
-        or_traces.append(go.Bar(
-            x=feature_labels,
-            y=best_log2_ors,
-            name=f"{best_cat} vs. rest",
-            marker_color=cat_colors[var_name][best_cat],
-            marker_opacity=0.7,
-            legendgroup="odds_ratio",
-            legendgrouptitle_text="log2 odds ratio",
-            showlegend=True,
-        ))
-
-    # --- Subplot grid ------------------------------------------------------
-    # (1,1) OR bar chart  |  (1,2) [empty/None]
-    # (2,1) main heatmap  |  (2,2) grouping annotation
-    #
-    # Axis mapping with None at (1,2):
-    #   (1,1) → xaxis,  yaxis
-    #   (2,1) → xaxis2, yaxis2
-    #   (2,2) → xaxis3, yaxis3
+    # (1,1) odds-ratio bars over (2,1) the heatmap, with (2,2) the sidebar
     fig = make_subplots(
         rows=2, cols=2,
-        column_widths=[1 - grouping_width, grouping_width],
+        column_widths=[0.8, 0.2],
         row_heights=[0.2, 0.8],
         horizontal_spacing=0.02,
         vertical_spacing=0.02,
-        specs=[
-            [{"type": "bar"},     None               ],
-            [{"type": "heatmap"}, {"type": "heatmap"}],
-        ],
+        specs=[[{"type": "bar"}, None], [{"type": "heatmap"}, {"type": "heatmap"}]],
     )
 
-    # (1,1) OR bars
-    for trace in or_traces:
-        fig.add_trace(trace, row=1, col=1)
+    # For each variable, the category whose members carry the features most
+    for var_name in meta.columns:
+        best = None
+        for category in categories[var_name]:
+            in_cat = meta[var_name] == category
+            out_cat = meta[var_name].notna() & ~in_cat
+            odds = [
+                log2_odds(int(positive.loc[in_cat, f].sum()), int(in_cat.sum() - positive.loc[in_cat, f].sum()),
+                          int(positive.loc[out_cat, f].sum()), int(out_cat.sum() - positive.loc[out_cat, f].sum()))
+                for f in positive.columns
+            ]
+            odds = [0.0 if value is None else value for value in odds]
+            if best is None or np.mean(odds) > np.mean(best[1]):
+                best = (category, odds)
+        fig.add_trace(go.Bar(
+            x=feature_labels, y=best[1], name=f"{best[0]} vs. rest",
+            marker_color=colors[var_name][best[0]], marker_opacity=0.7,
+            legendgroup="odds_ratio", legendgrouptitle_text="log2 odds ratio", showlegend=True,
+        ), row=1, col=1)
 
-    # (2,1) Main binary heatmap — z shape: (n_samples, n_features)
     fig.add_trace(
         go.Heatmap(
-            z=pos_sorted.values,
+            z=positive.values,
             x=feature_labels,
-            y=sample_labels,
+            y=[str(s) for s in positive.index],
             colorscale=[[0, "white"], [1, PRIMARY]],
             showscale=False,
             zmin=0, zmax=1,
@@ -339,60 +199,20 @@ def plot_positivity_heatmap(
         ),
         row=2, col=1,
     )
-
-    # (2,2) Categorical grouping heatmap — one trace per variable
-    legend_traces: list[go.Scatter] = []
-
     for var_name in meta.columns:
-        col_data = meta_sorted[var_name]
-        unique_cats = _categories(var_name)
-        N = len(unique_cats)
-        colors = [cat_colors[var_name][cat] for cat in unique_cats]
-
-        # Encode each category as the midpoint of its colour band (avoids
-        # boundary artefacts when building the discrete colorscale)
-        cat_to_mid = {cat: i + 0.5 for i, cat in enumerate(unique_cats)}
-        cs = []
-        for i, color in enumerate(colors):
-            cs.extend([[i / N, color], [(i + 1) / N, color]])
-
-        fig.add_trace(
-            go.Heatmap(
-                z=[[cat_to_mid.get(v, np.nan)] for v in col_data],
-                x=[str(var_name)],
-                y=sample_labels,
-                colorscale=cs,
-                showscale=False,
-                zmin=0, zmax=N,
-            ),
-            row=2, col=2,
+        add_category_sidebar(
+            fig, meta[var_name].set_axis([str(s) for s in positive.index]), categories[var_name], colors[var_name],
+            row=2, col=2, x=str(var_name), legend_group=str(var_name),
         )
 
-        for cat, color in zip(unique_cats, colors):
-            legend_traces.append(go.Scatter(
-                x=[None], y=[None],
-                mode='markers',
-                marker=dict(size=10, color=color, symbol='square'),
-                name=str(cat),
-                legendgroup=str(var_name),
-                legendgrouptitle_text=str(var_name) if cat == unique_cats[0] else None,
-                showlegend=True,
-            ))
-
-    for trace in legend_traces:
-        fig.add_trace(trace)
-
-    # --- Link shared axes and finalize -------------------------------------
     fig.update_layout(
-        barmode='overlay',
+        barmode="overlay",
         template=TEMPLATE,
         height=height,
         width=width,
-        # Samples: link grouping annotation y-axis to main heatmap y-axis
-        yaxis3=dict(matches='y2', showticklabels=False),
-        # Features: link OR bar x-axis to main heatmap x-axis
-        xaxis=dict(matches='x2', showticklabels=False),
-        legend=dict(x=1.02, y=1.0, xanchor='left', yanchor='top'),
+        yaxis3=dict(matches="y2", showticklabels=False),
+        xaxis=dict(matches="x2", showticklabels=False),
+        legend=dict(x=1.02, y=1.0, xanchor="left", yanchor="top"),
         margin=dict(t=40, b=150),
     )
     fig.update_xaxes(showticklabels=True, tickangle=-90, row=2, col=1)
@@ -400,7 +220,5 @@ def plot_positivity_heatmap(
     fig.update_yaxes(title_text="log2 odds ratio", row=1, col=1)
     fig.update_xaxes(showgrid=False, row=2, col=2)
     fig.update_yaxes(showgrid=False, row=2, col=2)
-
     save_image(fig, file_prefix)
-
     return fig

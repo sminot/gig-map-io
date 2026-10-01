@@ -6,6 +6,16 @@ import numpy as np
 
 
 class Coords:
+    """
+    Place the genes of several contigs in one coordinate space.
+
+    Contigs are added one at a time, each shifted (and flipped, if that fits
+    better) so that the genes it shares with the contigs already placed land
+    on top of them. ``to_df`` gives each gene's median position; ``fit`` maps
+    any coordinate on one contig into that same space, which is how the genes
+    surrounding a bin are drawn alongside it.
+    """
+
     start_coords: Dict[str, float]
     stop_coords: Dict[str, float]
     n: Dict[str, int]
@@ -14,6 +24,9 @@ class Coords:
         self.start_coords = defaultdict(list)
         self.stop_coords = defaultdict(list)
         self.seen = set([])
+        # Set by to_df: whether the whole space was flipped, and where it starts
+        self.flipped = False
+        self.origin = 0.0
 
         # Make sure there is only one gene alignment per contig
         aln = aln.groupby(["sseqid", "qseqid", "genome"]).head(1).assign(
@@ -45,6 +58,34 @@ class Coords:
                 contig_aln["qend"].to_dict()
             )
 
+    def fit(self, start_coords: Dict[str, int], stop_coords: Dict[str, int]):
+        """
+        How to map a contig's own coordinates into the space ``to_df``
+        reports: the orientation and shift under which its genes land closest
+        to their median positions. Returns a function of a coordinate.
+
+        Measured against the final medians, unlike the placements made while
+        the contigs were being added, which were each measured against the
+        medians as they then stood and so do not agree with the result.
+        """
+        best = None
+        for sign in (1, -1):
+            offsets = [
+                np.median(self.start_coords[gene]) - sign * start_coords[gene]
+                for gene in start_coords if gene in self.seen
+            ] + [
+                np.median(self.stop_coords[gene]) - sign * stop_coords[gene]
+                for gene in stop_coords if gene in self.seen
+            ]
+            if not offsets:
+                raise ValueError("None of the contig's genes have been placed")
+            fit = (np.std(offsets), sign, np.median(offsets))
+            if best is None or fit[0] < best[0]:
+                best = fit
+        _, sign, offset = best
+        flip = -1 if self.flipped else 1
+        return lambda position: flip * (sign * position + offset) - self.origin
+
     def to_df(self):
 
         df = pd.DataFrame([
@@ -62,7 +103,8 @@ class Coords:
         ).sort_values(by=["start", "gene"]).query("len > 0")
 
         # If all of the genes are in the reverse direction, flip the coordinates by multiplying by -1
-        if df["dir"].value_counts().get("rev", 0) == df.shape[0]:
+        self.flipped = df["dir"].value_counts().get("rev", 0) == df.shape[0]
+        if self.flipped:
             df = df.assign(
                 start=df["start"] * -1,
                 stop=df["stop"] * -1
@@ -73,6 +115,7 @@ class Coords:
 
         # Make it start at 0
         min_val = np.min([df["start"].min(), df["stop"].min()])
+        self.origin = float(min_val)
 
         df = df.assign(
             start=df["start"] - min_val,

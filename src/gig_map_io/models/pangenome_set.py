@@ -1,8 +1,4 @@
 from functools import cached_property
-from logging import getLogger
-import logging
-from pathlib import Path
-import sys
 from typing import Dict
 
 from plotly.subplots import make_subplots
@@ -14,33 +10,22 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests
 from gig_map_io.helpers.enrichment import enrich_organisms, plot_enrichment
 from gig_map_io.helpers.save_image import save_image
-from gig_map_io.helpers.style import SIMPLE_TEMPLATE, TEMPLATE, organism_colors
+from gig_map_io.helpers.style import SIMPLE_TEMPLATE, TEMPLATE, organism_colors, organism_order
 
 from .pangenome import Pangenome
 from .dataset_dict import DatasetDict
 
-logger = getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 
 class PangenomeSet(DatasetDict):
     """
     Representation of a set of pangenomes.
     """
-    def __init__(self, directory_dict: Dict[str, str | Path]) -> None:
-        super().__init__(directory_dict)
 
     @cached_property
     def pangenomes(self) -> Dict[str, Pangenome]:
         return {key: Pangenome(self.directory_dict[key]) for key in self.directory_dict.keys()}
 
     def __repr__(self) -> str:
-        return f"PangenomeSet(directory_dict={self.directory_dict})"
-
-    def __str__(self) -> str:
-        return f"PangenomeSet(directory_dict={self.directory_dict})"
-
-    def __format__(self, format_spec: str) -> str:
         return f"PangenomeSet(directory_dict={self.directory_dict})"
 
     def __getitem__(self, key: str) -> Pangenome:
@@ -214,25 +199,22 @@ class PangenomeSet(DatasetDict):
     def find_enriched_organisms(
         self,
         features: pd.MultiIndex | pd.DataFrame,
-        universe: pd.MultiIndex | None = None,
         alternative: str = "greater",
     ) -> pd.DataFrame:
         """
         Whether each organism contributed more bins to the given set than its
-        share of ``universe`` (every bin in the set by default). Fisher's
-        exact test per organism, FDR-corrected across organisms.
+        share of every bin in the pangenomes. Fisher's exact test per
+        organism, FDR-corrected across organisms.
         """
         index = features.index if isinstance(features, pd.DataFrame) else features
         return enrich_organisms(
-            index, self.all_bins if universe is None else universe, sorted(self.pangenomes), alternative
+            index, self.all_bins, organism_order(self.pangenomes), alternative
         )
 
     def plot_enriched_organisms(
         self,
         features: pd.MultiIndex | pd.DataFrame,
-        universe: pd.MultiIndex | None = None,
         qvalue_threshold: float = 0.2,
-        title: str = "Organisms among the candidate bins",
         width: int = 800,
         file_prefix: str | None = None,
     ) -> go.Figure:
@@ -241,14 +223,14 @@ class PangenomeSet(DatasetDict):
         how many of the bins each organism contributed and the log2 odds ratio
         against its share of the background, with the q-value beside each bar.
         """
-        enrichment = self.find_enriched_organisms(features, universe)
+        enrichment = self.find_enriched_organisms(features)
         return plot_enrichment(
             enrichment.assign(group="Candidate bins"),
             label="organism",
             axis_title="Organism",
-            title=title,
+            title="Organisms among the candidate bins",
             qvalue_threshold=qvalue_threshold,
-            order=sorted(enrichment["organism"]),
+            order=organism_order(enrichment["organism"]),
             width=width,
             height=None,
             file_prefix=file_prefix,
@@ -258,12 +240,8 @@ class PangenomeSet(DatasetDict):
 
     def plot_enriched_annotation_terms(
         self,
-        features: pd.MultiIndex | pd.DataFrame,
+        features: pd.MultiIndex,
         qvalue_threshold: float = 0.2,
-        min_count: int = 2,
-        alternative: str = "greater",
-        universe: pd.MultiIndex | None = None,
-        title: str = "Annotations among the candidate bins",
         width: int = 800,
         height: int | None = None,
         file_prefix: str | None = None,
@@ -276,35 +254,20 @@ class PangenomeSet(DatasetDict):
 
         Parameters
         ----------
-        features : pd.MultiIndex or pd.DataFrame
-            Either a MultiIndex of (pangenome, bin) pairs passed directly to
-            find_enriched_annotation_terms, or the DataFrame output of that method.
+        features : pd.MultiIndex
+            The (pangenome, bin) pairs to test, against every other bin.
         qvalue_threshold : float
             Only show terms with qvalue < this threshold.
-        min_count : int
-            Passed to find_enriched_annotation_terms when features is a MultiIndex.
-        alternative : str
-            Passed to find_enriched_annotation_terms when features is a MultiIndex.
-        universe : pd.MultiIndex, optional
-            Passed to find_enriched_annotation_terms when features is a MultiIndex.
         height : int, optional
             Follows the number of terms unless given.
         """
-        if isinstance(features, pd.MultiIndex):
-            enrichment_df = self.find_enriched_annotation_terms(
-                features, min_count=min_count, alternative=alternative, universe=universe
-            )
-        else:
-            enrichment_df = features
-
-        df = enrichment_df[enrichment_df["qvalue"] < qvalue_threshold].sort_values(
-            ["odds_ratio", "term"]
-        )
+        enrichment = self.find_enriched_annotation_terms(features)
+        df = enrichment[enrichment["qvalue"] < qvalue_threshold].sort_values(["odds_ratio", "term"])
         return plot_enrichment(
             df.assign(group="Candidate bins"),
             label="term",
             axis_title="Annotation term",
-            title=title,
+            title="Annotations among the candidate bins",
             qvalue_threshold=qvalue_threshold,
             order=df["term"].tolist()[::-1],
             width=width,
@@ -405,8 +368,6 @@ class PangenomeSet(DatasetDict):
             tickvals=[0, 1, 2, 3, 4, 5],
             ticktext=["1", "10", "100", "1k", "10k", "100k"]
         )
-        # If save_image was provided, use the string as the file
-        # prefix to write out HTML, PDF, PNG, and JSON
         save_image(fig, file_prefix)
 
         return fig

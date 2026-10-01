@@ -7,7 +7,7 @@ name = "gig-map-io"
 version = "0.1.0"
 description = "Library to read gig-map workflow outputs: reader objects per workflow, JSON study definitions, and the plots and statistics computed from them."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
   { name = "gig-map-io developers" }
@@ -43,10 +43,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Parameters.ui_* return marimo UI elements; nothing else in the library needs it
-notebook = [
-  "marimo>=0.8.0",
-]
 dev = [
   "pytest",
   "ruff",
@@ -54,8 +50,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/FredHutch/gig-map-io"
-Repository = "https://github.com/FredHutch/gig-map-io"
+Homepage = "https://github.com/sminot/gig-map-io"
+Repository = "https://github.com/sminot/gig-map-io"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -32,7 +32,6 @@ from .models import (
     Study,
     StudySet,
 )
-from .parameters import Parameters
 from .script import AnalysisScript
 
 __all__ = [
@@ -45,6 +44,5 @@ __all__ = [
     "SampleGroup",
     "Study",
     "StudySet",
-    "Parameters",
     "AnalysisScript",
 ]

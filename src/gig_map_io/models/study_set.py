@@ -25,8 +25,8 @@ from ..helpers.permanova import permanova
 from ..helpers.positivity import plot_feature_positivity, plot_positivity_heatmap
 from ..helpers.save_image import save_image
 from ..helpers.style import (
-    DENSE_MARKER_OPACITY, LARGE_QUALITATIVE, NEUTRAL, PRIMARY, TEMPLATE, THRESHOLD_LINE,
-    group_colors, organism_colors, organism_order,
+    DENSE_MARKER_OPACITY, ESTIMATE_THRESH, FDR_THRESH, LARGE_QUALITATIVE, PRIMARY, TEMPLATE,
+    THRESHOLD_LINE, TOP_LEGEND, group_colors, legend_above, organism_colors, organism_order,
 )
 from ..helpers.supervised import fit_classifier
 from .study import Study
@@ -67,7 +67,6 @@ class StudySet:
                 return study
         raise KeyError(f"No study named {name!r} in this set")
 
-    # --- Combined tables --------------------------------------------------
 
     @cached_property
     def rpkm(self) -> pd.DataFrame:
@@ -121,6 +120,11 @@ class StudySet:
         """Cohort names in the order declared by the studies."""
         return self._order("cohort")
 
+    @cached_property
+    def disease_order(self) -> List[str]:
+        """Disease states in the order declared by the studies, the case-like one first."""
+        return self._order("disease")
+
     def features(self, features: pd.MultiIndex | pd.DataFrame | None = None) -> pd.DataFrame:
         """The combined RPKM table, optionally restricted to a subset of bins."""
         if features is None:
@@ -128,12 +132,11 @@ class StudySet:
         index = features.index if isinstance(features, pd.DataFrame) else features
         return self.rpkm.reindex(columns=index)
 
-    # --- Significance across studies --------------------------------------
 
     def significant_bins(
         self,
-        estimate_thresh: float = 0.25,
-        fdr_thresh: float = 0.2,
+        estimate_thresh: float = ESTIMATE_THRESH,
+        fdr_thresh: float = FDR_THRESH,
     ) -> pd.DataFrame:
         """
         Bins passing the significance thresholds in *every* study in the set.
@@ -146,7 +149,6 @@ class StudySet:
             merged = df if merged is None else merged.join(df, how="inner")
         return merged
 
-    # --- Community diversity ----------------------------------------------
 
     def tsne_plot(
         self,
@@ -303,13 +305,11 @@ class StudySet:
         fig.update_yaxes(matches=None, showticklabels=True)
         fig.update_xaxes(title_text="")
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1].title()))
-        fig.update_layout(legend=dict(
-            orientation="h", x=0.5, xanchor="center", y=1 + 30 / height, yanchor="bottom",
-        ), margin=dict(t=90))
+        fig.update_layout(margin=dict(t=90))
+        legend_above(fig)
         save_image(fig, file_prefix)
         return fig
 
-    # --- Within-organism community types ----------------------------------
 
     def pangenome_clusters(
         self,
@@ -358,37 +358,64 @@ class StudySet:
                 })
 
         results = pd.DataFrame(rows)
-        fig = px.bar(
-            data_frame=results,
-            x="organism",
-            y="cramers_v",
-            color="study",
-            text="stars",
-            barmode="group",
-            template=TEMPLATE,
-            color_discrete_map=group_colors(self.study_order),
-            category_orders={"study": self.study_order, "organism": organism_order(clusters)},
-            labels={"organism": "Organism", "cramers_v": "Cram&#233;r's V", "study": "Study"},
+        fig = self._organism_study_bars(
+            results, y="cramers_v", study_order=self.study_order,
+            labels={"cramers_v": "Cram&#233;r's V"},
             hover_data={"p_value": ":.2e", "cramers_v": ":.2f"},
             title="Association between community type and disease state",
-            width=width,
-            height=height,
+            footnote="Chi-squared test: * p < 0.05, ** p < 0.01, *** p < 0.001",
+            width=width, height=height, text="stars",
         )
         fig.update_traces(textposition="outside", textangle=-90, textfont_size=11, cliponaxis=False)
         fig.update_yaxes(range=[0, results["cramers_v"].max() * 1.2])
+        save_image(fig, file_prefix)
+        return fig
+
+    def _organism_study_bars(
+        self,
+        summary: pd.DataFrame,
+        y: str,
+        study_order: List[str],
+        labels: dict,
+        hover_data: dict,
+        title: str,
+        width: int,
+        height: int,
+        footnote: str | None = None,
+        **bar_kwargs,
+    ) -> go.Figure:
+        """
+        One group of bars per organism, one bar per study, in the fixed
+        organism order and study colours, with a legend above and an optional
+        footnote below the tilted organism labels.
+        """
+        fig = px.bar(
+            data_frame=summary,
+            x="organism",
+            y=y,
+            color="study",
+            barmode="group",
+            template=TEMPLATE,
+            color_discrete_map=group_colors(study_order),
+            category_orders={"study": study_order, "organism": organism_order(summary["organism"])},
+            labels={"organism": "Organism", "study": "Study", **labels},
+            hover_data=hover_data,
+            title=title,
+            width=width,
+            height=height,
+            **bar_kwargs,
+        )
         fig.update_xaxes(title_text="", tickangle=-25)
         fig.update_layout(
             bargroupgap=0.05,
-            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
-            margin=dict(t=95, b=130),
+            legend=TOP_LEGEND,
+            margin=dict(t=95 if title else 60, b=130 if footnote else 80),
         )
-        # Below the tilted organism labels
-        fig.add_annotation(
-            text="Chi-squared test: * p < 0.05, ** p < 0.01, *** p < 0.001",
-            x=0.5, xref="paper", y=0, yref="paper", yshift=-105, showarrow=False,
-            font=dict(size=11, color="#555555"),
-        )
-        save_image(fig, file_prefix)
+        if footnote:
+            fig.add_annotation(
+                text=footnote, x=0.5, xref="paper", y=0, yref="paper", yshift=-105, showarrow=False,
+                font=dict(size=11, color="#555555"),
+            )
         return fig
 
     def cluster_tsne_plot(
@@ -454,7 +481,7 @@ class StudySet:
             x="cluster",
             y="value",
             color="disease",
-            color_discrete_map=group_colors(self._order("disease")),
+            color_discrete_map=group_colors(self.disease_order),
             facet_col="study",
             facet_col_wrap=1,
             facet_row_spacing=0.06,
@@ -463,7 +490,7 @@ class StudySet:
             category_orders={
                 "study": studies,
                 "cluster": _sorted_clusters(clusters["cluster"]),
-                "disease": self._order("disease"),
+                "disease": self.disease_order,
             },
             labels={"value": "% of samples", "cluster": "", "disease": "Disease"},
             width=width,
@@ -472,15 +499,11 @@ class StudySet:
         fig.update_yaxes(matches=None)
         fig.update_xaxes(tickangle=-90)
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
-        fig.update_layout(
-            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
-            margin=dict(t=80),
-        )
-        fig.layout.legend.y = 1 + 30 / fig.layout.height
+        fig.update_layout(margin=dict(t=80))
+        legend_above(fig)
         save_image(fig, file_prefix)
         return fig
 
-    # --- Bin abundance by cohort ------------------------------------------
 
     def bin_proportion_boxplot(
         self,
@@ -520,13 +543,13 @@ class StudySet:
             x="Cohort",
             y="Proportion",
             color="Group",
-            color_discrete_map=group_colors(self._order("disease")),
+            color_discrete_map=group_colors(self.disease_order),
             template=TEMPLATE,
             log_y=True,
             facet_col="Feature",
             facet_col_wrap=1,
             facet_row_spacing=min(0.05, 0.6 / max(n_bins, 1)),
-            category_orders={"Cohort": self.cohort_order, "Group": self._order("disease")},
+            category_orders={"Cohort": self.cohort_order, "Group": self.disease_order},
             labels={"Proportion": "Proportion of genomes", "Group": ""},
             width=width,
             height=height if height is not None else 150 * n_bins + 160,
@@ -546,16 +569,11 @@ class StudySet:
             text="Proportion of genomes", x=0, xref="paper", y=0.5, yref="paper",
             xshift=-58, textangle=-90, showarrow=False, font=dict(size=14),
         )
-        fig.update_layout(
-            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
-            margin=dict(t=80),
-        )
-        # Above the first facet's title, which px draws at the top of the plot
-        fig.layout.legend.y = 1 + 30 / fig.layout.height
+        fig.update_layout(margin=dict(t=80))
+        legend_above(fig)
         save_image(fig, file_prefix)
         return fig
 
-    # --- Feature positivity -----------------------------------------------
 
     def plot_feature_positivity(
         self,
@@ -595,7 +613,6 @@ class StudySet:
         return rpkm, metadata
 
 
-    # --- Supervised models ------------------------------------------------
 
     def classify_by_organism(
         self,
@@ -684,20 +701,10 @@ class StudySet:
             .agg(auc_mean=("roc_auc", "mean"), auc_std=("roc_auc", "std"))
             .reset_index()
         )
-        labels = [study.label for study in self.studies]
-        fig = px.bar(
-            data_frame=summary,
-            x="organism",
-            y="auc_mean",
-            error_y="auc_std",
-            color="study",
-            color_discrete_map=group_colors(labels),
-            barmode="group",
-            template=TEMPLATE,
-            labels={"organism": "Organism", "auc_mean": "Validation ROC-AUC", "study": "Study"},
-            category_orders={"study": labels, "organism": organism_order(summary["organism"])},
-            width=width,
-            height=height,
+        fig = self._organism_study_bars(
+            summary, y="auc_mean", study_order=[study.label for study in self.studies],
+            labels={"auc_mean": "Validation ROC-AUC"}, hover_data={"auc_std": ":.3f"}, title="",
+            width=width, height=height, error_y="auc_std",
         )
         fig.update_traces(error_y=dict(thickness=1, width=4))
         fig.add_hline(
@@ -705,11 +712,6 @@ class StudySet:
             annotation_font_color="#555555", **THRESHOLD_LINE,
         )
         fig.update_yaxes(range=[0.4, 1.05])
-        fig.update_xaxes(tickangle=-35, title_text="")
-        fig.update_layout(
-            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
-            margin=dict(t=60),
-        )
         save_image(fig, file_prefix)
         return fig
 
@@ -726,35 +728,11 @@ class StudySet:
         Importance of one organism's bins in each study's model, against each
         other. Bins near the diagonal carry signal in both.
         """
-        if len(self.studies) != 2:
-            raise ValueError("plot_shap_comparison compares exactly two studies")
-        x_label, y_label = (study.label for study in self.studies)
-
-        df = shap.loc[shap["organism"] == organism].sort_values(
-            ["combined", "bin"], ascending=[False, True]
-        )
-        limit = max(df[x_label].max(), df[y_label].max()) * 1.08
-
-        fig = px.scatter(
-            data_frame=df,
-            x=x_label,
-            y=y_label,
-            hover_name="bin",
-            hover_data={"combined": ":.5f"},
-            template=TEMPLATE,
-            labels={
-                x_label: f"Mean |SHAP|, {x_label}",
-                y_label: f"Mean |SHAP|, {y_label}",
-            },
-            title=f"{organism}: bin importance in each study",
-            width=width,
-            height=height,
-            range_x=[0, limit],
-            range_y=[0, limit],
+        df = shap.loc[shap["organism"] == organism].sort_values(["combined", "bin"], ascending=[False, True])
+        fig, x_label, y_label, _ = self._shap_scatter(
+            df, title=f"{organism}: bin importance in each study", width=width, height=height,
         )
         fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, color=PRIMARY))
-        fig.add_shape(type="line", x0=0, y0=0, x1=limit, y1=limit,
-                      line=dict(color="#b0b0b0", dash="dash", width=1))
         top = df.head(n_labelled)
         fig.add_trace(go.Scatter(
             x=top[x_label], y=top[y_label], mode="text", text=top["bin"],
@@ -763,6 +741,38 @@ class StudySet:
         ))
         save_image(fig, file_prefix)
         return fig
+
+    def _shap_scatter(self, df: pd.DataFrame, title: str, width: int, height: int, **scatter_kwargs):
+        """
+        Importance to the first study's model against importance to the
+        second's, on equal axes with the diagonal drawn. Returns the figure,
+        the two axis columns and the axis limit.
+        """
+        if len(self.studies) != 2:
+            raise ValueError("SHAP comparisons need exactly two studies")
+        x_label, y_label = (study.label for study in self.studies)
+        limit = max(df[x_label].max(), df[y_label].max()) * 1.08
+        fig = px.scatter(
+            data_frame=df,
+            x=x_label,
+            y=y_label,
+            hover_name="bin",
+            template=TEMPLATE,
+            labels={
+                x_label: f"Mean |SHAP|, {x_label}",
+                y_label: f"Mean |SHAP|, {y_label}",
+                "organism": "Organism",
+            },
+            title=title,
+            width=width,
+            height=height,
+            range_x=[0, limit],
+            range_y=[0, limit],
+            **scatter_kwargs,
+        )
+        fig.add_shape(type="line", x0=0, y0=0, x1=limit, y1=limit,
+                      line=dict(color="#b0b0b0", dash="dash", width=1))
+        return fig, x_label, y_label, limit
 
     def plot_shap_comparison_all(
         self,
@@ -777,36 +787,15 @@ class StudySet:
         model against importance to the second's, coloured by organism, with
         the bins ranking highest on the combined importance named.
         """
-        if len(self.studies) != 2:
-            raise ValueError("plot_shap_comparison_all compares exactly two studies")
-        x_label, y_label = (study.label for study in self.studies)
         df = shap.sort_values(["combined", "organism", "bin"], ascending=[False, True, True])
-        limit = max(df[x_label].max(), df[y_label].max()) * 1.08
-
-        fig = px.scatter(
-            data_frame=df,
-            x=x_label,
-            y=y_label,
+        fig, x_label, y_label, limit = self._shap_scatter(
+            df, title="Bin importance in each study, all organisms", width=width, height=height,
             color="organism",
             color_discrete_map=organism_colors(df["organism"]),
             category_orders={"organism": organism_order(df["organism"])},
-            hover_name="bin",
             hover_data={"combined": ":.4f", "organism": True},
-            template=TEMPLATE,
-            labels={
-                x_label: f"Mean |SHAP|, {x_label}",
-                y_label: f"Mean |SHAP|, {y_label}",
-                "organism": "Organism",
-            },
-            title="Bin importance in each study, all organisms",
-            width=width,
-            height=height,
-            range_x=[0, limit],
-            range_y=[0, limit],
         )
         fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, line_width=0))
-        fig.add_shape(type="line", x0=0, y0=0, x1=limit, y1=limit,
-                      line=dict(color="#b0b0b0", dash="dash", width=1))
         # The named bins crowd the lower-left corner, so each label is set
         # out to the right, spaced evenly down the empty side of the plot,
         # and tied back to its point with an arrow
@@ -897,87 +886,29 @@ class StudySet:
                 "organism": organism,
                 "study": study,
                 "share": joint / (main + joint),
-                "strongest_pair": f"{strongest['bin_a']} &times; {strongest['bin_b']}",
+                "strongest_pair": f"{strongest['bin_a']} x {strongest['bin_b']}",
                 "strongest_over_main": strongest["mean_abs_interaction"] / model.loc[own, "mean_abs_interaction"].max(),
             })
         summary = pd.DataFrame(rows)
         if file_prefix is not None:
-            summary.assign(strongest_pair=summary["strongest_pair"].str.replace(" &times; ", " x ")).to_csv(
-                file_prefix + ".csv", index=False
-            )
-        labels = [study.label for study in self.studies]
-
-        fig = px.bar(
-            data_frame=summary,
-            x="organism",
-            y="share",
-            color="study",
-            barmode="group",
-            template=TEMPLATE,
-            color_discrete_map=group_colors(labels),
-            category_orders={"study": labels, "organism": organism_order(summary["organism"])},
+            summary.to_csv(file_prefix + ".csv", index=False)
+        n_top = interactions.groupby(["organism", "study"])["bin_a"].nunique().max()
+        fig = self._organism_study_bars(
+            summary, y="share", study_order=[study.label for study in self.studies],
             labels={
-                "organism": "Organism",
                 "share": "Share of attribution from bin interactions",
-                "study": "Study",
                 "strongest_over_main": "Strongest pair / strongest main effect",
                 "strongest_pair": "Strongest pair",
             },
             hover_data={"share": ":.2f", "strongest_pair": True, "strongest_over_main": ":.2f"},
             title="How much each model relies on bins acting together",
-            width=width,
-            height=height,
+            footnote=f"Attribution among each model's {n_top} most important bins, split into main effects and pairwise interactions",
+            width=width, height=height,
         )
         fig.update_yaxes(range=[0, min(1.0, summary["share"].max() * 1.3)], tickformat=".0%")
-        fig.update_xaxes(title_text="", tickangle=-25)
-        fig.update_layout(
-            bargroupgap=0.05,
-            legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom"),
-            margin=dict(t=95, b=130),
-        )
-        fig.add_annotation(
-            text="Attribution among each model's ten most important bins, split into main effects and pairwise interactions",
-            x=0.5, xref="paper", y=0, yref="paper", yshift=-105, showarrow=False,
-            font=dict(size=11, color="#555555"),
-        )
         save_image(fig, file_prefix)
         return fig
 
-    def plot_interaction_heatmap(
-        self,
-        interactions: pd.DataFrame,
-        organism: str,
-        study_label: str,
-        file_prefix: str | None = None,
-    ) -> go.Figure:
-        """Interaction strength between the most important bins of one model."""
-        matrix = (
-            interactions
-            .loc[(interactions["organism"] == organism) & (interactions["study"] == study_label)]
-            .pivot(index="bin_a", columns="bin_b", values="mean_abs_interaction")
-        )
-        matrix = matrix.reindex(index=matrix.columns)
-        fig = go.Figure(
-            data=go.Heatmap(
-                z=matrix.values,
-                x=matrix.columns,
-                y=matrix.index,
-                colorscale="Magma",
-                colorbar=dict(title="Mean |SHAP<br>interaction|", thickness=14),
-                hovertemplate="%{y} x %{x}: %{z:.4g}<extra></extra>",
-            ),
-            layout=dict(
-                title=f"{organism}, {study_label}: bin interactions",
-                template=TEMPLATE,
-                xaxis=dict(tickangle=-45, showgrid=False),
-                yaxis=dict(showgrid=False),
-                height=max(320, 30 * len(matrix) + 140),
-                width=max(440, 30 * len(matrix) + 280),
-                margin=dict(l=90, b=90),
-            ),
-        )
-        save_image(fig, file_prefix)
-        return fig
 
 
 def _significance_stars(p_value: float) -> str:
