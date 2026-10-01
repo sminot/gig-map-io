@@ -22,7 +22,7 @@ from ..helpers.style import (
     ZERO_LINE, group_colors,
 )
 
-#: How the association columns are labelled wherever they are plotted
+#: How the association columns are labeled wherever they are plotted
 ASSOCIATION_LABELS = dict(
     Estimate_clipped="Effect size",
     Estimate="Effect size",
@@ -342,7 +342,7 @@ class ContrastMetagenomes(Dataset):
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=", 1)[-1]))
 
         # Faceting repeats the x-axis title once per column, which collides for
-        # any label of a reasonable length. One centred caption instead.
+        # any label of a reasonable length. One centered caption instead.
         fig.update_xaxes(title_text="")
         fig.add_annotation(
             text=(

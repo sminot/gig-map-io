@@ -162,8 +162,8 @@ class StudySet:
         """
         t-SNE ordination of the combined samples, colored by a sample group.
 
-        The levels of a group are coloured in the order the studies declare
-        them, so that a group shared between figures is coloured alike; a
+        The levels of a group are colored in the order the studies declare
+        them, so that a group shared between figures is colored alike; a
         group with more levels than the palette (participants) is not given
         a legend.
         """
@@ -342,7 +342,7 @@ class StudySet:
 
         One group of bars per organism, one bar per study, so that the
         cohorts can be read against each other within an organism and the
-        same cohort followed across organisms by its colour. The chi-squared
+        same cohort followed across organisms by its color. The chi-squared
         significance is printed over each bar as stars.
         """
         rows = []
@@ -386,7 +386,7 @@ class StudySet:
     ) -> go.Figure:
         """
         One group of bars per organism, one bar per study, in the fixed
-        organism order and study colours, with a legend above and an optional
+        organism order and study colors, with a legend above and an optional
         footnote below the tilted organism labels.
         """
         fig = px.bar(
@@ -429,7 +429,7 @@ class StudySet:
         t-SNE ordination of one organism's samples, colored by community type.
 
         There can be more community types than the standard palette has
-        colours, so a larger one is used here and nowhere else, and the
+        colors, so a larger one is used here and nowhere else, and the
         height grows with the legend unless given.
         """
         order = _sorted_clusters(clusters["cluster"])
@@ -784,7 +784,7 @@ class StudySet:
     ) -> go.Figure:
         """
         Every organism's bins on one plot: importance to the first study's
-        model against importance to the second's, coloured by organism, with
+        model against importance to the second's, colored by organism, with
         the bins ranking highest on the combined importance named.
         """
         df = shap.sort_values(["combined", "organism", "bin"], ascending=[False, True, True])
@@ -824,7 +824,7 @@ class StudySet:
         models rely on most: for each study, the bins in the top
         ``top_fraction`` of mean |SHAP| across every modelled bin, tested
         against the organisms' shares of all the modelled bins. One row per
-        organism per study, labelled by a ``group`` column.
+        organism per study, labeled by a ``group`` column.
         """
         universe = pd.MultiIndex.from_frame(shap[["organism", "bin"]])
         organisms = organism_order(shap["organism"])

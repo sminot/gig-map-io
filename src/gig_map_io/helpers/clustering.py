@@ -24,7 +24,7 @@ def leiden(
     """
     Compute Leiden cluster labels from a DataFrame.
 
-    Builds a k-nearest-neighbour graph from the input features, then runs the
+    Builds a k-nearest-neighbor graph from the input features, then runs the
     Leiden community-detection algorithm to assign cluster membership.
 
     Parameters
@@ -36,15 +36,15 @@ def leiden(
         more, smaller clusters; lower values produce fewer, larger clusters.
         Typical values: 0.1–2.0.
     n_neighbors : int
-        Number of nearest neighbours used to build the KNN graph.
+        Number of nearest neighbors used to build the KNN graph.
         Larger values capture more global structure. Typical values: 5–50.
     random_state : int
         Seed for reproducibility.
     scale : bool
-        If True, standardise features to zero mean and unit variance before
+        If True, standardize features to zero mean and unit variance before
         building the KNN graph (strongly recommended).
     metric : str
-        Distance metric used to compute nearest neighbours. Any metric
+        Distance metric used to compute nearest neighbors. Any metric
         supported by ``sklearn.neighbors.NearestNeighbors`` is valid
         (e.g. ``"cosine"``, ``"manhattan"``).
     **kwargs
@@ -113,8 +113,8 @@ def linkage_order(
 ) -> np.ndarray:
     """
     Row indices in the order hierarchical clustering leaves them, so that
-    similar rows sit together. ``optimal`` reorders the leaves to minimise
-    the distance between neighbours, which costs more but reads better.
+    similar rows sit together. ``optimal`` reorders the leaves to minimize
+    the distance between neighbors, which costs more but reads better.
     Fewer than two rows come back as they are.
     """
     if matrix.shape[0] < 2:

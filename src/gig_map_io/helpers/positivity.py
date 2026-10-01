@@ -130,13 +130,13 @@ def plot_positivity_heatmap(
 
     Three panels: the binary heatmap of features (columns) at or above
     ``threshold`` in each sample (rows), both axes ordered by hierarchical
-    clustering; one column of colour per grouping variable beside it; and
+    clustering; one column of color per grouping variable beside it; and
     above it, for each grouping variable, the log2 odds of carrying each
     feature in the category that is most enriched for the features against
     the rest of the samples.
 
     ``group_orders`` gives each grouping variable's categories in display
-    order, the first being the case-like one, which sets their colours.
+    order, the first being the case-like one, which sets their colors.
     """
     shared_idx = rpkm.index.intersection(grouping.index)
     positive = (rpkm.loc[shared_idx] >= threshold).astype(int)

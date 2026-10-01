@@ -2,7 +2,7 @@
 The one look every figure shares.
 
 Registers a plotly template carrying the fonts, title placement, legend and
-axis styling, and the qualitative palette, and names the colours that mean
+axis styling, and the qualitative palette, and names the colors that mean
 the same thing wherever they appear: which organism a point belongs to, and
 whether a group is the case-like or the control-like side of a contrast.
 """
@@ -25,11 +25,11 @@ SIMPLE_TEMPLATE = "simple_white+gig_map"
 PNG_SCALE = 2
 MATPLOTLIB_DPI = 200
 
-#: Colour of a series when nothing distinguishes it from another.
+#: Color of a series when nothing distinguishes it from another.
 PRIMARY = "#2c6fbb"
 NEUTRAL = "#8a8f98"
 
-#: Ten distinguishable hues (Paul Tol's colour-blind safe set, led by
+#: Ten distinguishable hues (Paul Tol's color-blind safe set, led by
 #: ``PRIMARY``) for organisms, studies and any other categorical series.
 QUALITATIVE = [
     PRIMARY, "#CC6677", "#117733", "#DDCC77", "#AA4499",
@@ -41,7 +41,7 @@ QUALITATIVE = [
 LARGE_QUALITATIVE = px.colors.qualitative.Dark24
 
 #: The two sides of a contrast: cases, or whatever is being tested for, in a
-#: warm colour; controls in a cool one (Okabe-Ito vermillion and blue).
+#: warm color; controls in a cool one (Okabe-Ito vermillion and blue).
 CASE_COLOR = "#D55E00"
 CONTROL_COLOR = "#0072B2"
 
@@ -52,7 +52,7 @@ THRESHOLD_LINE = dict(line_color="#c0392b", line_width=1, line_dash="dash")
 #: Marker opacity for scatter plots dense enough that points overlap.
 DENSE_MARKER_OPACITY = 0.7
 
-#: A horizontal legend centred above the plot area.
+#: A horizontal legend centered above the plot area.
 TOP_LEGEND = dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom")
 
 #: The thresholds that make a bin significant: the smallest effect size and
@@ -93,7 +93,7 @@ def organism_order(organisms: Sequence[str]) -> List[str]:
 
 def organism_colors(organisms: Sequence[str]) -> Dict[str, str]:
     """
-    A colour for each organism, assigned by name so that the same organism is
+    A color for each organism, assigned by name so that the same organism is
     drawn the same way in every figure whatever subset of organisms it shows.
     """
     return {
@@ -104,7 +104,7 @@ def organism_colors(organisms: Sequence[str]) -> Dict[str, str]:
 
 def group_colors(order: Sequence[str]) -> Dict[str, str]:
     """
-    Colours for the levels of a sample group, in the order the study declares
+    Colors for the levels of a sample group, in the order the study declares
     them. A two-level group is a contrast, with the first level the case-like
     one; anything else takes the qualitative palette in order.
     """

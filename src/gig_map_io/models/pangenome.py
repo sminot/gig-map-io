@@ -28,7 +28,7 @@ from ..helpers.phylogeny import Phylogeny
 logger = logging.getLogger(__name__)
 
 def _largest_cluster(genes: pd.DataFrame, max_gap: int) -> pd.DataFrame:
-    """The longest run of genes, by count, in which no two neighbours are more than ``max_gap`` apart."""
+    """The longest run of genes, by count, in which no two neighbors are more than ``max_gap`` apart."""
     ordered = genes.sort_values("start")
     starts = ordered["start"].values
     breaks = np.flatnonzero(np.diff(starts) > max_gap) + 1
@@ -628,7 +628,7 @@ class Pangenome(Dataset):
         file_prefix: str | None = None,
     ) -> plt.Figure:
         """
-        The bin's genes with their neighbourhood in the genomes that carry
+        The bin's genes with their neighborhood in the genomes that carry
         them: the gene map above one row per genome, each row the stretch of
         contig around the bin with every gene on it drawn as an arrow.
 
@@ -644,7 +644,7 @@ class Pangenome(Dataset):
         run of them with no gap over ``max_gap`` bp, and the title says how
         many lie elsewhere. ``genome_names`` labels the rows (keyed by the
         genome's file name, as in ``helpers.ncbi.genome_names``); a genome
-        it does not name is labelled by its accession.
+        it does not name is labeled by its accession.
         """
         aln = self.align_genomes
         in_bin = aln.loc[aln["bin"] == bin].drop_duplicates(["sseqid", "qseqid", "genome"])
@@ -718,7 +718,7 @@ class Pangenome(Dataset):
         for row in ordered:
             row["genome_label"] = (genome_names or {}).get(row["genome"]) or _short_genome_name(row["genome"])
 
-        title = title or f"{bin} and its neighbourhood"
+        title = title or f"{bin} and its neighborhood"
         if n_elsewhere:
             title += f" ({n_elsewhere} of its {n_bin_genes} genes lie outside this window)"
         fig = plot_gene_context(

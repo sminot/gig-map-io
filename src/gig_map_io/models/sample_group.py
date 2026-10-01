@@ -5,7 +5,7 @@ A gig-map contrast carries whatever metadata columns the workflow was run
 with, using whatever encoding the study used (``batch_1`` of 0/1, ``disease``
 of 0/1, a ``study_name`` that is null for the study it was assembled around).
 A ``SampleGroup`` describes how to turn one or more of those raw columns into
-a single labelled categorical column, so that the mapping lives in the study
+a single labeled categorical column, so that the mapping lives in the study
 definition rather than in analysis code.
 """
 
@@ -48,7 +48,7 @@ class SampleGroupSource:
             raise ValueError("SampleGroupSource 'split' and 'index' must be given together")
 
     def resolve(self, metadata: pd.DataFrame) -> pd.Series:
-        """Return the labelled values for this source, aligned to `metadata`."""
+        """Return the labeled values for this source, aligned to `metadata`."""
         if self.value is not None:
             return pd.Series(self.value, index=metadata.index, dtype=object)
 
@@ -104,7 +104,7 @@ class SampleGroup:
         return out
 
     def resolve(self, metadata: pd.DataFrame) -> pd.Series:
-        """Combine the sources into a single labelled column."""
+        """Combine the sources into a single labeled column."""
         values = pd.Series(None, index=metadata.index, dtype=object)
         for source in self.sources:
             values = values.fillna(source.resolve(metadata))

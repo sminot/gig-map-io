@@ -56,7 +56,7 @@ class Study:
         working directory; pass it explicitly to read the same definition
         against a copy of the data somewhere else.
     sample_groups:
-        Named recodings of the contrast metadata into labelled categoricals
+        Named recodings of the contrast metadata into labeled categoricals
         (see :class:`~gig_map_io.models.sample_group.SampleGroup`).
     """
 
@@ -285,7 +285,7 @@ class Study:
     def organism_enrichment(self) -> pd.DataFrame:
         """
         Organism enrichment among the positively and among the negatively
-        associated bins, tested independently and labelled by a ``group``
+        associated bins, tested independently and labeled by a ``group``
         column.
         """
         return pd.concat(
@@ -300,7 +300,7 @@ class Study:
         """
         Annotation term enrichment among the positively and among the
         negatively associated bins, tested independently against the bins
-        this study covered and labelled by a ``group`` column.
+        this study covered and labeled by a ``group`` column.
         """
         return pd.concat(
             [
@@ -399,7 +399,7 @@ class Study:
         return self.pangenome(organism).bin_gene_map(bin, **kwargs)
 
     def bin_context_map(self, organism: str, bin: str, **kwargs: Any):
-        kwargs.setdefault("title", f"{organism} {bin} and its neighbourhood")
+        kwargs.setdefault("title", f"{organism} {bin} and its neighborhood")
         return self.pangenome(organism).bin_context_map(bin, **kwargs)
 
     def genome_names(self, cache: str | Path) -> pd.DataFrame:

@@ -1,5 +1,5 @@
 """
-A column of colour beside a heatmap, one cell per sample, showing which
+A column of color beside a heatmap, one cell per sample, showing which
 category each sample belongs to.
 """
 
@@ -24,11 +24,11 @@ def add_category_sidebar(
 ) -> None:
     """
     Draw ``values`` (one per sample, in the order the heatmap's rows are
-    drawn) as a single-column heatmap at ``x``, each category in its colour,
+    drawn) as a single-column heatmap at ``x``, each category in its color,
     and add one legend entry per category under the heading ``legend_group``.
     """
-    # Each category takes one band of a stepped colour scale, with its code
-    # centred in the band so that no cell falls on a boundary
+    # Each category takes one band of a stepped color scale, with its code
+    # centered in the band so that no cell falls on a boundary
     n = len(categories)
     code = {category: i for i, category in enumerate(categories)}
     scale = []

@@ -91,7 +91,7 @@ def plot_observed_expected(
     ``groups`` names the heading each tick sits under. By default consecutive
     ticks sharing a heading are drawn as one block along a single axis, with
     the heading beneath them; with ``facet_groups`` each heading becomes its
-    own row, labelled in the right margin, and the rows share both axes so
+    own row, labeled in the right margin, and the rows share both axes so
     that the bars line up vertically.
 
     A fold change is printed over each pair whose expected count reaches
@@ -216,7 +216,7 @@ def _plot_in_line(ticks, groups, observed, expected, title, subtitle, y_title, c
 
 def _plot_faceted(ticks, groups, observed, expected, title, subtitle, y_title, caption, width, height) -> go.Figure:
     """
-    One row per group, labelled in the right margin.
+    One row per group, labeled in the right margin.
 
     The rows share a y axis so that a bar in one row can be read against a bar
     in another, which is the comparison a contingency table is for. No axis

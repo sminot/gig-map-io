@@ -59,7 +59,7 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
         takes, default 1). ``width_mm``, ``columns``, ``gutter_mm``,
         ``margin_mm`` and ``label_size_pt`` set the layout;
         ``max_panel_height_mm`` caps how tall a panel may be drawn, so that a
-        tall, narrow panel is shrunk and centred in its cell rather than
+        tall, narrow panel is shrunk and centered in its cell rather than
         stretching its row.
     root:
         The directory the panel paths are relative to.
@@ -99,7 +99,7 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
                 page=page,
                 label=panel.get("label", LABELS[index]),
                 scale=scale,
-                # Centred in a cell it does not fill, but always hung from the top
+                # Centered in a cell it does not fill, but always hung from the top
                 x=cell_x + (cell_width - placed_width) / 2,
                 y=top + placed_height,
                 cell_x=cell_x,

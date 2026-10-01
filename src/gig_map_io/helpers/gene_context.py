@@ -4,12 +4,12 @@ A bin's genes in the context of the genomes that carry them.
 The gene map shows the genes of one bin on a single line. The context map
 puts that line over one row per genome: the stretch of the contig carrying
 the bin, with every gene on it drawn as an arrow, so that what surrounds the
-bin -- and whether that neighbourhood is the same from genome to genome --
+bin -- and whether that neighborhood is the same from genome to genome --
 can be read off directly.
 
-Genes are coloured by identity: the same gene is the same colour in every
-row, so conserved synteny appears as columns of matching colour, and genes
-found in only one of the rows shown are grey. The bin's own genes carry a
+Genes are colored by identity: the same gene is the same color in every
+row, so conserved synteny appears as columns of matching color, and genes
+found in only one of the rows shown are gray. The bin's own genes carry a
 black outline.
 """
 
@@ -25,7 +25,7 @@ from matplotlib.patches import Polygon
 from .clustering import linkage_order
 
 #: Twenty hues for the genes shared between rows, assigned by position so
-#: that neighbouring genes differ; genes unique to one row are grey
+#: that neighboring genes differ; genes unique to one row are gray
 SHARED_COLORS = [plt.get_cmap("tab20")(i) for i in range(20)]
 UNIQUE_COLOR = "#d9d9d9"
 BIN_OUTLINE = "#111111"
@@ -65,7 +65,7 @@ def draw_gene_labels(
 ) -> None:
     """
     Gene arrows along a line at ``y`` with each gene's label standing over it:
-    labels sit at a fixed spacing (``LABEL_PITCH`` font sizes), centred over
+    labels sit at a fixed spacing (``LABEL_PITCH`` font sizes), centered over
     the genes, each tied to its gene by a leader line, which is what keeps
     them legible when genes are packed. The font shrinks if the labels would
     not otherwise fit between ``x0`` and ``x1``.
@@ -80,8 +80,8 @@ def draw_gene_labels(
     font, pitch_pt = fit_labels(len(genes), font_size, width_pt)
     pitch = pitch_pt * (x1 - x0) / width_pt
     block = len(genes) * pitch
-    centre = (genes[["start", "stop"]].min().min() + genes[["start", "stop"]].max().max()) / 2
-    left = min(max(centre - block / 2, x0), x1 - block)
+    center = (genes[["start", "stop"]].min().min() + genes[["start", "stop"]].max().max()) / 2
+    left = min(max(center - block / 2, x0), x1 - block)
     for i, gene in genes.iterrows():
         if arrow_height > 0:
             ax.add_patch(gene_arrow(gene["start"], gene["stop"], y, arrow_height, "#555555", "#333333", 0.6))
@@ -114,7 +114,7 @@ def gene_arrow(start: float, stop: float, y: float, height: float, face, edge, e
 def order_rows(presence: pd.DataFrame) -> list:
     """
     Rows ordered by hierarchical clustering on which genes they carry, so
-    that genomes with the same neighbourhood sit together.
+    that genomes with the same neighborhood sit together.
     """
     return [presence.index[i] for i in linkage_order(presence.values.astype(bool), metric="jaccard", optimal=True)]
 
@@ -162,7 +162,7 @@ def plot_gene_context(
     top = fig.add_subplot(gs[0])
     main = fig.add_subplot(gs[1], sharex=top)
 
-    # The bin alone, labelled, above the rows
+    # The bin alone, labeled, above the rows
     draw_gene_labels(
         top, bin_genes.assign(label=bin_genes["label"]), lo, hi, y=0.0,
         text_offset=0.08, font_size=font_size, arrow_height=0.06,
@@ -170,7 +170,7 @@ def plot_gene_context(
     top.set_ylim(-0.06, 1.0)
     top.axis("off")
 
-    # Colours by gene: shared genes take a hue in order of position
+    # Colors by gene: shared genes take a hue in order of position
     everything = pd.concat([row["genes"].assign(row=i) for i, row in enumerate(rows)], ignore_index=True)
     counts = everything.groupby("gene")["row"].nunique()
     positions = everything.groupby("gene")["start"].median().sort_values()
@@ -200,7 +200,7 @@ def plot_gene_context(
     main.set_xticklabels([f"{(t - lo) / 1000:g}" for t in ticks], fontsize=font_size - 1)
     main.set_xlabel("kb", fontsize=font_size)
     fig.text(
-        0.98, 0.012, "Same colour: same gene.  Outlined: in the bin.  Grey: found in one of these genomes only.",
+        0.98, 0.012, "Same color: same gene.  Outlined: in the bin.  Gray: found in one of these genomes only.",
         ha="right", va="bottom", fontsize=font_size - 1, color="#555555",
     )
     return fig

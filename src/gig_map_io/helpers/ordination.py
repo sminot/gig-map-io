@@ -27,12 +27,12 @@ def tsne(
     n_components : int
         Number of t-SNE dimensions (2 or 3).
     perplexity : float
-        t-SNE perplexity. Roughly the number of effective nearest neighbours.
+        t-SNE perplexity. Roughly the number of effective nearest neighbors.
         Typical values: 5–50.
     random_state : int
         Seed for reproducibility.
     scale : bool
-        If True, standardise features to zero mean and unit variance before
+        If True, standardize features to zero mean and unit variance before
         running t-SNE (strongly recommended).
 
     Any additional keyword arguments will be passed to TSNE()

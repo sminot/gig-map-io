@@ -19,8 +19,8 @@ from plotly.subplots import make_subplots
 from .save_image import save_image
 from .style import CASE_COLOR, CONTROL_COLOR, TEMPLATE, ZERO_LINE, group_colors
 
-#: How the significant bins are split by direction of effect, and the colour
-#: of each side: bins higher in cases take the case colour
+#: How the significant bins are split by direction of effect, and the color
+#: of each side: bins higher in cases take the case color
 ASSOCIATION_COLORS = {
     "Positively associated": CASE_COLOR,
     "Negatively associated": CONTROL_COLOR,
@@ -192,7 +192,7 @@ def plot_enrichment(
         fig.add_annotation(
             text="No bins met the significance threshold",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
-            font=dict(color="grey"),
+            font=dict(color="gray"),
         )
         fig.update_xaxes(visible=False)
         fig.update_yaxes(visible=False)

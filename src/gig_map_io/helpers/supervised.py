@@ -70,9 +70,9 @@ def fit_classifier(
     """
     import xgboost as xgb
 
-    labelled = labels.dropna()
-    X = np.log1p(features.reindex(index=labelled.index))
-    y = labelled.values.astype(int)
+    labeled = labels.dropna()
+    X = np.log1p(features.reindex(index=labeled.index))
+    y = labeled.values.astype(int)
 
     if min(y.sum(), len(y) - y.sum()) < MIN_CLASS_SIZE:
         return None

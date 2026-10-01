@@ -119,8 +119,8 @@ class ContrastMetagenomesSet(DatasetDict):
 
     def _organism_scatter(self, df: pd.DataFrame, x: str, y: str, marker: dict, **kwargs) -> go.Figure:
         """
-        A scatter of bins coloured by organism, named in the hover by
-        organism and bin, with the fixed organism colours and order.
+        A scatter of bins colored by organism, named in the hover by
+        organism and bin, with the fixed organism colors and order.
         """
         df = df.assign(hover_name=df["pangenome"] + "<br>" + df["feature"])
         fig = px.scatter(
@@ -147,7 +147,7 @@ class ContrastMetagenomesSet(DatasetDict):
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
-        """Volcano plot from the association results, coloured by organism."""
+        """Volcano plot from the association results, colored by organism."""
         df = self.association.assign(hover_name=lambda d: d["pangenome"] + "<br>" + d["feature"])
         fig = volcano_figure(
             df, estimate_thresh, fdr_thresh, max_abs_estimate,
@@ -194,7 +194,7 @@ class ContrastMetagenomesSet(DatasetDict):
             the column's display label: ``{"GvHD": {"1": "Case", "0": "Control"}}``.
         annotation_orders : dict, optional
             Order of the (display) values of an annotation column, keyed the
-            same way. A two-level column is coloured as a contrast, with the
+            same way. A two-level column is colored as a contrast, with the
             first level the case-like one.
         rpkm_height_fraction : float
             Fraction of the figure height given to the abundance heatmap; the
@@ -284,7 +284,7 @@ class ContrastMetagenomesSet(DatasetDict):
             fig.update_yaxes(showticklabels=False, row=1, col=1)
 
         # The categorical legend runs along the top, leaving the right margin
-        # to the two colour bars
+        # to the two color bars
         fig.update_layout(
             width=width,
             height=height,

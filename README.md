@@ -17,7 +17,7 @@ workflow (genes-in-genomes map) and running the analyses built on them.
 
 - **`Study`** — names the gig-map outputs belonging to one comparison, keyed by
   organism, along with the recoding that turns raw contrast metadata into
-  labelled sample groups. A study is serialized as JSON holding relative paths,
+  labeled sample groups. A study is serialized as JSON holding relative paths,
   so a definition can be checked in next to the analysis code and re-resolved
   against a downloaded copy of the data. **`StudySet`** spans several studies
   for community-level analyses.
@@ -163,8 +163,8 @@ declared input, each defaulting to where that thing sits in a checkout.
 `Pangenome.bin_gene_map` draws the genes of one bin along a line, placed by
 their median position across the contigs that carry them.
 `Pangenome.bin_context_map` puts that map over one row per genome: the stretch
-of contig around the bin with every gene on it drawn as an arrow, coloured by
-gene identity so that conserved synteny shows as columns of matching colour,
+of contig around the bin with every gene on it drawn as an arrow, colored by
+gene identity so that conserved synteny shows as columns of matching color,
 with the bin's genes outlined. The genomes whose contigs span most of the
 window are shown, a GenBank copy of a RefSeq assembly is dropped, and rows are
 ordered by clustering on the genes they carry. Both use `helpers.coords.Coords`
@@ -210,16 +210,16 @@ compose_panels(
 
 ## Figure style
 
-Every plotting method draws with the template and colours in
+Every plotting method draws with the template and colors in
 `gig_map_io.helpers.style`, so that figures from different methods read as one
 set. `TEMPLATE` (a light grid) and `SIMPLE_TEMPLATE` (axis lines only, for
 heatmaps and trees) layer the shared fonts and layout over plotly's own
 templates. `organism_order` lists organisms alphabetically by display name, which is the
-order every figure uses, `organism_colors` gives every organism a fixed colour
+order every figure uses, `organism_colors` gives every organism a fixed color
 by name, and
-`group_colors` colours the levels of a sample group in the order the study
+`group_colors` colors the levels of a sample group in the order the study
 declares them, with the first level of a two-level group -- the case-like one
--- in the warm colour. `save_image` exports PNGs at twice the layout size.
+-- in the warm color. `save_image` exports PNGs at twice the layout size.
 
 ## Reproducibility
 
