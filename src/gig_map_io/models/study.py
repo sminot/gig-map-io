@@ -27,6 +27,7 @@ from .phylogeny import PangenomePhylogeny
 from .phylogeny_set import PangenomePhylogenySet
 from .sample_group import SampleGroup
 from ..helpers.enrichment import enrich_organisms, plot_enrichment
+from ..helpers.ncbi import genome_names
 from ..helpers.style import ESTIMATE_THRESH, FDR_THRESH, organism_order
 
 #: The two sets the significant bins are split into, by the sign of their effect
@@ -400,6 +401,13 @@ class Study:
     def bin_context_map(self, organism: str, bin: str, **kwargs: Any):
         kwargs.setdefault("title", f"{organism} {bin} and its neighbourhood")
         return self.pangenome(organism).bin_context_map(bin, **kwargs)
+
+    def genome_names(self, cache: str | Path) -> pd.DataFrame:
+        """
+        A display name for every genome in the study's pangenomes, built from
+        NCBI's record of each assembly; see ``helpers.ncbi.genome_names``.
+        """
+        return genome_names(self.pangenomes.genomes, cache)
 
     def bin_presence_heatmap(self, organism: str, bins, **kwargs: Any) -> go.Figure:
         return self.pangenome(organism).bin_presence_heatmap(bins, **kwargs)

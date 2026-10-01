@@ -6,7 +6,7 @@ from functools import cached_property
 import hashlib
 import logging
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List
 from Bio import Phylo
 import pandas as pd
 import numpy as np
@@ -624,6 +624,7 @@ class Pangenome(Dataset):
         remove_gene_id: bool = True,
         remove_org_tag: bool = True,
         title: str | None = None,
+        genome_names: Dict[str, str] | None = None,
         file_prefix: str | None = None,
     ) -> plt.Figure:
         """
@@ -641,7 +642,9 @@ class Pangenome(Dataset):
 
         A bin's genes need not sit together: the window covers the largest
         run of them with no gap over ``max_gap`` bp, and the title says how
-        many lie elsewhere.
+        many lie elsewhere. ``genome_names`` labels the rows (keyed by the
+        genome's file name, as in ``helpers.ncbi.genome_names``); a genome
+        it does not name is labelled by its accession.
         """
         aln = self.align_genomes
         in_bin = aln.loc[aln["bin"] == bin].drop_duplicates(["sseqid", "qseqid", "genome"])
@@ -713,7 +716,7 @@ class Pangenome(Dataset):
         by_genome = {row["genome"]: row for row in chosen}
         ordered = [by_genome[genome] for genome in order_rows(presence)]
         for row in ordered:
-            row["genome_label"] = _short_genome_name(row["genome"])
+            row["genome_label"] = (genome_names or {}).get(row["genome"]) or _short_genome_name(row["genome"])
 
         title = title or f"{bin} and its neighbourhood"
         if n_elsewhere:

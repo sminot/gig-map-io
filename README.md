@@ -170,6 +170,17 @@ window are shown, a GenBank copy of a RefSeq assembly is dropped, and rows are
 ordered by clustering on the genes they carry. Both use `helpers.coords.Coords`
 to build the shared coordinate space.
 
+## Genome names
+
+`helpers.ncbi.genome_names` gives every assembly in a pangenome a readable
+name, "A. finegoldii CE91-St15 (GCF_022846055.1)", from NCBI's Datasets record
+of the accession: the genus reduced to its initial, the strain from the strain
+field, the isolate, a designation the organism name carries, or a
+submitter-given assembly name, in that order. Records are fetched once and
+kept in a JSON cache the caller names, so a complete cache needs no network.
+`Study.genome_names(cache)` covers a study's pangenomes; the context map and
+`Phylogeny.newick` take the resulting mapping.
+
 ## Multi-panel figures
 
 `gig_map_io.helpers.panels.compose_panels` places the PDFs that several

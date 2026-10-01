@@ -146,16 +146,19 @@ def plot_gene_context(
     n_rows = len(rows)
     # The label panel is as tall as its longest label, which stands upright,
     # at the size the labels will actually be drawn
-    label_font, _ = fit_labels(len(bin_genes), font_size, width * (0.98 - 0.16) * 72)
+    label_font, _ = fit_labels(len(bin_genes), font_size, width * 0.8 * 72)
     label_height = 0.5 + bin_genes["label"].str.len().max() * label_font * LABEL_INCH_PER_POINT_CHAR
     rows_height = ROW_HEIGHT_IN * n_rows
     fig_height = TITLE_HEIGHT_IN + label_height + rows_height + 0.55 + 0.6
+    # The left margin holds the longest row label
+    longest = max((len(row["genome"]) for row in rows), default=10)
+    left = min(0.4, 0.02 + longest * (font_size - 1) * 0.0085 / width)
     fig = plt.figure(figsize=(width, fig_height))
     gs = fig.add_gridspec(
         2, 1, height_ratios=[label_height, rows_height + 0.55], hspace=0.02,
-        left=0.16, right=0.98, top=1 - TITLE_HEIGHT_IN / fig_height, bottom=0.6 / fig_height,
+        left=left, right=0.98, top=1 - TITLE_HEIGHT_IN / fig_height, bottom=0.6 / fig_height,
     )
-    fig.text(0.16, 1 - 0.5 * TITLE_HEIGHT_IN / fig_height, title, fontsize=font_size + 3, weight="bold", va="center")
+    fig.text(left, 1 - 0.5 * TITLE_HEIGHT_IN / fig_height, title, fontsize=font_size + 3, weight="bold", va="center")
     top = fig.add_subplot(gs[0])
     main = fig.add_subplot(gs[1], sharex=top)
 

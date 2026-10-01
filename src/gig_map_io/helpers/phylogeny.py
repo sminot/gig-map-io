@@ -1,3 +1,4 @@
+import copy
 import logging
 from typing import Dict, List
 
@@ -341,11 +342,14 @@ class Phylogeny:
     def _get_leafs(self, node: Tree):
         return [leaf.name for leaf in node.get_terminals()]
 
-    def newick(self) -> str:
-        """
-        Return the Newick string for the tree.
-        """
-        return self.tree.format("newick")
+    def newick(self, rename: Dict[str, str] | None = None) -> str:
+        """The tree as Newick, with leaves renamed through ``rename`` where it names them."""
+        if not rename:
+            return self.tree.format("newick")
+        tree = copy.deepcopy(self.tree)
+        for leaf in tree.get_terminals():
+            leaf.name = _newick_safe(rename.get(leaf.name, leaf.name))
+        return tree.format("newick")
     def dedup_refseq(self) -> None:
         """
         Drop the GenBank copy of any assembly that is also present as RefSeq.
@@ -357,3 +361,8 @@ class Phylogeny:
         leaves = {leaf.name: leaf for leaf in self.tree.get_terminals()}
         for name in genbank_duplicates(leaves):
             self.tree.prune(leaves[name])
+
+
+def _newick_safe(name: str) -> str:
+    """A leaf label with the characters Newick reserves replaced."""
+    return name.replace("(", "[").replace(")", "]").replace(",", " ").replace(":", " ").replace(";", " ").replace("'", "")
