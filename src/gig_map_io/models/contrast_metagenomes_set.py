@@ -324,7 +324,7 @@ class ContrastMetagenomesSet(DatasetDict):
         estimate_thresh: float = ESTIMATE_THRESH,
         self_label: str = "self",
         comparator_label: str = "comparator",
-        width: int = 800,
+        width: int = 640,
         height: int = 500,
         file_prefix: str | None = None,
     ) -> go.Figure:
