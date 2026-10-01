@@ -36,6 +36,18 @@ BIN_OUTLINE = "#111111"
 ROW_HEIGHT_IN = 0.32
 TITLE_HEIGHT_IN = 0.4
 LABEL_INCH_PER_POINT_CHAR = 0.0085
+#: Upright labels are spaced this many font sizes apart
+LABEL_PITCH = 1.3
+
+
+def fit_labels(n: int, font_size: float, width_pt: float) -> tuple[float, float]:
+    """
+    The font size and spacing (both in points) for ``n`` upright labels in a
+    panel ``width_pt`` wide: the spacing follows the font size, and the font
+    shrinks when the labels would otherwise overflow the panel.
+    """
+    font = min(font_size, width_pt / (n * LABEL_PITCH))
+    return font, font * LABEL_PITCH
 ARROW_HEIGHT = 0.62
 #: An arrowhead is this long, or two fifths of the gene if that is shorter
 ARROWHEAD_BP = 250
@@ -53,8 +65,10 @@ def draw_gene_labels(
 ) -> None:
     """
     Gene arrows along a line at ``y`` with each gene's label standing over it:
-    labels are spaced evenly across ``[x0, x1]`` and tied to their gene by a
-    leader line, which is what keeps them legible when genes are packed.
+    labels sit at a fixed spacing (``LABEL_PITCH`` font sizes), centred over
+    the genes, each tied to its gene by a leader line, which is what keeps
+    them legible when genes are packed. The font shrinks if the labels would
+    not otherwise fit between ``x0`` and ``x1``.
 
     ``genes`` has ``start``, ``stop`` and ``label`` columns in the axes' x
     units. ``text_offset`` is how far above the line the labels begin, in
@@ -62,18 +76,23 @@ def draw_gene_labels(
     height (in y units) rather than as line arrows.
     """
     genes = genes.sort_values(["start", "label"]).reset_index(drop=True)
-    span = x1 - x0
+    width_pt = ax.get_position().width * ax.figure.get_figwidth() * 72
+    font, pitch_pt = fit_labels(len(genes), font_size, width_pt)
+    pitch = pitch_pt * (x1 - x0) / width_pt
+    block = len(genes) * pitch
+    centre = (genes[["start", "stop"]].min().min() + genes[["start", "stop"]].max().max()) / 2
+    left = min(max(centre - block / 2, x0), x1 - block)
     for i, gene in genes.iterrows():
         if arrow_height > 0:
             ax.add_patch(gene_arrow(gene["start"], gene["stop"], y, arrow_height, "#555555", "#333333", 0.6))
         else:
             ax.annotate("", xytext=(gene["start"], y), xy=(gene["stop"], y), arrowprops=dict(arrowstyle="simple"))
-        label_x = x0 + span * (i + 0.5) / len(genes)
+        label_x = left + (i + 0.5) * pitch
         ax.annotate(
             "", xytext=(label_x, y + text_offset), xy=(np.mean([gene["start"], gene["stop"]]), y + text_offset / 5),
             arrowprops=dict(arrowstyle="-", linewidth=0.6, color="#666666"),
         )
-        ax.text(label_x, y + text_offset, gene["label"], rotation=90, fontsize=font_size,
+        ax.text(label_x, y + text_offset, gene["label"], rotation=90, fontsize=font,
                 horizontalalignment="center", verticalalignment="bottom")
 
 
@@ -125,8 +144,10 @@ def plot_gene_context(
     """
     lo, hi = window
     n_rows = len(rows)
-    # The label panel is as tall as its longest label, which stands upright
-    label_height = 0.5 + bin_genes["label"].str.len().max() * font_size * LABEL_INCH_PER_POINT_CHAR
+    # The label panel is as tall as its longest label, which stands upright,
+    # at the size the labels will actually be drawn
+    label_font, _ = fit_labels(len(bin_genes), font_size, width * (0.98 - 0.16) * 72)
+    label_height = 0.5 + bin_genes["label"].str.len().max() * label_font * LABEL_INCH_PER_POINT_CHAR
     rows_height = ROW_HEIGHT_IN * n_rows
     fig_height = TITLE_HEIGHT_IN + label_height + rows_height + 0.55 + 0.6
     fig = plt.figure(figsize=(width, fig_height))
