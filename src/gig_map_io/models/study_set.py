@@ -323,10 +323,17 @@ class StudySet:
         Samples with no detectable signal for the organism are dropped.
         Returns the t-SNE coordinates, the Leiden cluster label, and the
         sample metadata.
+
+        The clustering graph is built on the abundances as they are:
+        Bray-Curtis is a dissimilarity between non-negative compositions, and
+        standardizing each bin first would hand it negative values it is not
+        defined for.
         """
         rpkm = self.weighted_rpkm[organism]
         rpkm = rpkm.loc[rpkm.max(axis=1) > 0]
-        coords = tsne(rpkm).assign(cluster=leiden(rpkm, resolution=resolution, metric=metric))
+        coords = tsne(rpkm).assign(
+            cluster=leiden(rpkm, resolution=resolution, metric=metric, scale=False)
+        )
         return pd.concat([coords, self.sample_metadata.reindex(index=rpkm.index)], axis=1)
 
     def cluster_disease_contingency(

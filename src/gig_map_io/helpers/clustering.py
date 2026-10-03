@@ -42,7 +42,9 @@ def leiden(
         Seed for reproducibility.
     scale : bool
         If True, standardize features to zero mean and unit variance before
-        building the KNN graph (strongly recommended).
+        building the KNN graph. Suits Euclidean or cosine distances; turn it
+        off for a dissimilarity defined only on non-negative values, such as
+        Bray-Curtis.
     metric : str
         Distance metric used to compute nearest neighbors. Any metric
         supported by ``sklearn.neighbors.NearestNeighbors`` is valid
