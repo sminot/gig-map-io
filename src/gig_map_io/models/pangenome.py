@@ -27,6 +27,26 @@ from ..helpers.phylogeny import Phylogeny
 
 logger = logging.getLogger(__name__)
 
+#: The log2 odds ratios beyond these are drawn in the end boxes. The upper
+#: edge is high because the pairs that sit together on a contig only stand
+#: apart from the merely common ones above about 15.
+LOG_ODDS_BINS = (-4, 16)
+
+#: Width of a log2 odds ratio box
+LOG_ODDS_STEP = 2
+
+#: How gene co-occurrence can be scored against distance: the column of
+#: calc_membership_vs_distance, its axis title, and how it is binned
+MEMBERSHIP_METRICS = {
+    "jaccard": ("membership", "Genome membership (Jaccard similarity)", lambda x: x.round(1)),
+    "log_odds": (
+        "log2_odds_ratio",
+        "Co-occurrence across genomes (log2 odds ratio)",
+        lambda x: (x / LOG_ODDS_STEP).round().mul(LOG_ODDS_STEP).clip(*LOG_ODDS_BINS),
+    ),
+}
+
+
 def _largest_cluster(genes: pd.DataFrame, max_gap: int) -> pd.DataFrame:
     """The longest run of genes, by count, in which no two neighbors are more than ``max_gap`` apart."""
     ordered = genes.sort_values("start")
@@ -244,7 +264,11 @@ class Pangenome(Dataset):
 
         Returns
         -------
-        DataFrame containing the membership and distance metrics.
+        One row per pair of genes: ``membership``, the Jaccard similarity of
+        the genomes carrying each; ``log2_odds_ratio``, the log2 odds of the
+        two genes sharing a genome, from the 2x2 table over every genome in
+        the pangenome with 0.5 added to each cell; and ``distance``, their
+        mean separation on the contigs that carry both.
         """
 
         n_genomes_per_gene = (
@@ -265,9 +289,10 @@ class Pangenome(Dataset):
             self.align_genomes
             .loc[self.align_genomes["sseqid"].isin(genes)]
             .assign(
-                gene_position=lambda d: d["qstart"] + d["qend"] / 2
+                gene_position=lambda d: (d["qstart"] + d["qend"]) / 2
             )
         )
+        n_genomes = self.align_genomes["genome"].nunique()
 
         # Compare each pair of genes to compute the membership and distance
         output = []
@@ -275,10 +300,19 @@ class Pangenome(Dataset):
             for gene2, df2 in df.groupby("sseqid"):
                 if gene1 <= gene2:
                     continue
+                genomes1, genomes2 = set(df1["genome"]), set(df2["genome"])
+                shared = len(genomes1 & genomes2)
+                only1 = len(genomes1 - genomes2)
+                only2 = len(genomes2 - genomes1)
+                neither = n_genomes - shared - only1 - only2
                 output.append(dict(
                     gene1=gene1,
                     gene2=gene2,
-                    membership=len(set(df1["genome"]) & set(df2["genome"])) / len(set(df1["genome"]) | set(df2["genome"])),
+                    membership=shared / (shared + only1 + only2),
+                    # 0.5 in every cell keeps the ratio finite for pairs never seen together
+                    log2_odds_ratio=np.log2(
+                        (shared + 0.5) * (neither + 0.5) / ((only1 + 0.5) * (only2 + 0.5))
+                    ),
                     distance=self._compute_gene_distance(df1, df2, max_distance)
                 ))
 
@@ -304,6 +338,7 @@ class Pangenome(Dataset):
 
     def compare_membership_vs_distance(
         self,
+        metric: str = "jaccard",
         n_genes: int = 100,
         min_n_genomes: int = 10,
         max_n_genomes: int = 100,
@@ -318,15 +353,20 @@ class Pangenome(Dataset):
         of their membership across all genomes, and then also compute their
         typical physical distance across those genomes (when they are both present).
         Then plot the relationship between these two metrics.
-        """
 
+        ``metric`` is how membership is scored, and is a key of
+        ``MEMBERSHIP_METRICS``: ``"jaccard"`` in steps of 0.1, or
+        ``"log_odds"`` in steps of ``LOG_ODDS_STEP`` log2 units, the end
+        boxes holding the tails.
+        """
+        column, axis_title, to_bins = MEMBERSHIP_METRICS[metric]
         df = (
             self.calc_membership_vs_distance(
                 min_n_genomes, max_n_genomes, n_genes, random_state=random_state
             )
             .assign(
                 distance_log10=lambda d: np.log10(d["distance"]),
-                membership_bins=lambda d: d["membership"].apply(lambda x: round(x, 1))
+                membership_bins=lambda d: to_bins(d[column])
             )
         )
 
@@ -337,13 +377,21 @@ class Pangenome(Dataset):
             template=TEMPLATE,
             labels=dict(
                 distance_log10="Mean distance between genes (bp)",
-                membership_bins="Genome membership (Jaccard similarity)"
+                membership_bins=axis_title
             ),
             width=width,
             height=height,
             **kwargs
         )
         fig.update_traces(marker=dict(size=4, opacity=0.6), line_width=1)
+        if metric == "log_odds":
+            ticks = list(range(LOG_ODDS_BINS[0], LOG_ODDS_BINS[1] + 1, LOG_ODDS_STEP))
+            fig.update_xaxes(
+                tickmode="array",
+                tickvals=ticks,
+                ticktext=[f"\u2264{t}" if t == LOG_ODDS_BINS[0] else f"\u2265{t}" if t == LOG_ODDS_BINS[1] else str(t)
+                          for t in ticks],
+            )
         fig.update_yaxes(
             tickmode='array',
             tickvals=[0, 1, 2, 3, 4, 5, 6],
