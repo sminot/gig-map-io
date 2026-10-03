@@ -241,26 +241,32 @@ class Pangenome(Dataset):
         random_state: int = 42
     ) -> pd.DataFrame:
         """
-        For a random subset of genes, compute how similar they are in terms
-        of their membership across all genomes, and then also compute their
-        typical physical distance across those genomes (when they are both present).
-        Then plot the relationship between these two metrics.
+        For a random subset of genes, how similar each pair's genome
+        membership is, and how far apart the two typically sit in the genomes
+        that carry both.
 
-        To prevent a skewing by bin size, we'll randomly select a subset of bins
-        and then randomly select a subset of genes from each bin.
+        The genes eligible are those found in between ``min_n_genomes`` and
+        ``max_n_genomes`` genomes, and ``n_genes`` of them are drawn at random
+        from that pool, with every pair of the drawn genes compared. The upper
+        limit is what keeps the core genome out: genes carried by nearly
+        every genome co-occur almost perfectly wherever they sit, and would
+        swamp the relationship between co-occurrence and distance. The lower
+        limit drops genes whose co-occurrence rests on too few genomes.
 
         Parameters
         ----------
         min_n_genomes: int
-            Minimum number of genomes that a gene must be present in to be considered.
+            Fewest genomes a gene may be found in and still be drawn.
         max_n_genomes: int
-            Maximum number of genomes that a gene can be present in to be considered.
+            Most genomes a gene may be found in and still be drawn.
         n_genes: int
-            Number of genes to select from each bin (up to the size of the bin).
+            How many genes to draw from the eligible pool; numpy raises a
+            ValueError if the pool holds fewer.
         max_distance: int
-            Maximum distance to consider for the genomic coordinates (in bp).
+            Cap on a pair's distance in bp, and the distance given to a pair
+            never found on the same contig.
         random_state: int
-            Seed for the gene subsampling.
+            Seed for the gene draw.
 
         Returns
         -------
