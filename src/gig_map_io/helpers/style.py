@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Sequence
 
+import matplotlib
 import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -55,10 +56,23 @@ DENSE_MARKER_OPACITY = 0.7
 #: A horizontal legend centered above the plot area.
 TOP_LEGEND = dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom")
 
+#: A legend of at most this many entries sits above the plot; a longer one,
+#: such as the ten organisms, runs down the right margin
+SHORT_LEGEND = 6
+
+#: Height of one row of horizontal legend, in px
+LEGEND_ROW_PX = 40
+
 #: The thresholds that make a bin significant: the smallest effect size and
 #: the largest FDR-adjusted q-value.
 ESTIMATE_THRESH = 0.25
 FDR_THRESH = 0.2
+
+# Matplotlib draws the gene and context maps in the same family the plotly
+# template names, so that the two kinds of figure set text alike: Helvetica,
+# else Arial or its metric twin Liberation Sans (which the container has)
+matplotlib.rcParams["font.family"] = "sans-serif"
+matplotlib.rcParams["font.sans-serif"] = ["Helvetica", "Arial", "Liberation Sans", "DejaVu Sans"]
 
 pio.templates["gig_map"] = go.layout.Template(
     layout=dict(
@@ -76,7 +90,9 @@ pio.templates["gig_map"] = go.layout.Template(
             ticks="outside", showline=True, linecolor="#444444", linewidth=1,
             gridcolor="#ececec", zeroline=False,
         ),
-        margin=dict(l=70, r=30, t=70, b=60),
+        # Figures carry no title, so the top margin only clears the plot's
+        # own edge; a legend above makes room for itself (legend_above)
+        margin=dict(l=70, r=30, t=40, b=60),
         coloraxis=dict(colorbar=dict(outlinewidth=0, thickness=14)),
     ),
 )
@@ -121,4 +137,8 @@ def legend_above(fig: go.Figure, offset_px: int = 30) -> None:
     express draws at the top of the first facet. Needs the figure's height to
     be set already.
     """
-    fig.update_layout(legend=dict(TOP_LEGEND, y=1 + offset_px / fig.layout.height))
+    top = fig.layout.margin.t or 0
+    fig.update_layout(
+        legend=dict(TOP_LEGEND, y=1 + offset_px / fig.layout.height),
+        margin=dict(t=max(top, offset_px + LEGEND_ROW_PX)),
+    )

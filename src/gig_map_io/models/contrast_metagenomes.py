@@ -19,7 +19,7 @@ from ..helpers.make_lines import make_lines
 from ..helpers.save_image import save_image
 from ..helpers.style import (
     DENSE_MARKER_OPACITY, ESTIMATE_THRESH, FDR_THRESH, PRIMARY, TEMPLATE, THRESHOLD_LINE,
-    ZERO_LINE, group_colors,
+    ZERO_LINE, group_colors, legend_above,
 )
 
 #: How the association columns are labeled wherever they are plotted
@@ -165,12 +165,17 @@ class ContrastMetagenomes(Dataset):
         estimate_thresh: float = ESTIMATE_THRESH,
         fdr_thresh: float = FDR_THRESH,
         max_abs_estimate: float = 5.0,
+        label_bins: tuple = (),
         width: int = 560,
         height: int = 450,
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
-        """Volcano plot from the association results, each bin sized by its mean abundance."""
+        """
+        Volcano plot from the association results, each bin sized by its mean
+        abundance. Each bin named in ``label_bins`` is pointed out with an
+        arrow and its name.
+        """
         fig = volcano_figure(
             self.association, estimate_thresh, fdr_thresh, max_abs_estimate,
             hover_data=self.association.columns.values,
@@ -183,6 +188,16 @@ class ContrastMetagenomes(Dataset):
             **kwargs
         )
         fig.update_traces(marker=dict(opacity=DENSE_MARKER_OPACITY, line_width=0))
+        for bin in label_bins:
+            point = self.association.loc[self.association["feature"] == bin]
+            if point.empty:
+                raise ValueError(f"{bin} is not among the bins this contrast tested")
+            fig.add_annotation(
+                x=float(point["Estimate"].clip(-max_abs_estimate, max_abs_estimate).iloc[0]),
+                y=float(point["neg_log10_qvalue"].iloc[0]),
+                text=bin, showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.2,
+                arrowcolor="#333333", ax=45, ay=-25, font=dict(size=13),
+            )
         save_image(fig, file_prefix)
         return fig
 
@@ -279,13 +294,12 @@ class ContrastMetagenomes(Dataset):
             groups=groups,
             observed=observed,
             expected=expected,
-            title=f"Is {bin} more common in one {metadata_col} group?",
-            subtitle=(
-                f"present at {measured} &#8805; {threshold:g} &#183; n = {result['n']} "
+            y_title="Samples",
+            caption=(
+                f"Present at {measured} &#8805; {threshold:g} &#183; n = {result['n']} "
                 f"&#183; odds ratio {result['odds_ratio']:.2f} "
                 f"&#183; Fisher's exact p = {format_pvalue(result['pvalue'])}"
             ),
-            y_title="Samples",
             facet_groups=True,
             width=width,
             height=height,
@@ -298,6 +312,7 @@ class ContrastMetagenomes(Dataset):
         norm_bin: str | None = None,
         group_labels: dict | None = None,
         group_order: list | None = None,
+        x_title: str | None = None,
         width: int = 500,
         height: int = 400,
         file_prefix: str | None = None,
@@ -306,7 +321,8 @@ class ContrastMetagenomes(Dataset):
         """
         A histogram of the bin's abundance across samples, optionally relative
         to ``norm_bin``; ``kwargs`` go to ``px.histogram`` (``color``,
-        ``facet_row``, ``histnorm`` ...).
+        ``facet_row``, ``histnorm`` ...). ``x_title`` names the abundance
+        axis, by default after the bins it measures.
 
         ``group_labels`` renames the values of the metadata column used for
         ``color`` / ``facet_row`` (say 1 to "BSI"), and ``group_order`` gives
@@ -335,23 +351,25 @@ class ContrastMetagenomes(Dataset):
             height=height,
             **kwargs
         )
-        fig.update_yaxes(
-            title_text=f"{kwargs.get('histnorm', 'number').title()} of samples",
-            col=1
-        )
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=", 1)[-1]))
 
-        # Faceting repeats the x-axis title once per column, which collides for
-        # any label of a reasonable length. One centered caption instead.
+        # Faceting repeats each axis title once per facet, which collides for
+        # any title of a reasonable length: one centered title per axis
+        # instead, sized as the template draws one
         fig.update_xaxes(title_text="")
+        fig.update_yaxes(title_text="")
+        if x_title is None:
+            x_title = f"Abundance of {bin} (RPKM)" if norm_bin is None else f"Abundance of {bin} / {norm_bin}"
         fig.add_annotation(
-            text=(
-                f"Abundance of {bin} (RPKM)"
-                if norm_bin is None
-                else f"Abundance of {bin} / {norm_bin}"
-            ),
-            xref="paper", yref="paper", x=0.5, y=0, yshift=-38,
-            showarrow=False,
+            text=x_title, xref="paper", yref="paper", x=0.5, y=0, yshift=-30,
+            yanchor="top", showarrow=False, font=dict(size=14),
         )
+        fig.add_annotation(
+            text=f"{kwargs.get('histnorm', 'number').capitalize()} of samples",
+            xref="paper", yref="paper", x=0, y=0.5, xshift=-55, textangle=-90,
+            showarrow=False, font=dict(size=14),
+        )
+        fig.update_layout(margin=dict(l=75, b=75))
+        legend_above(fig)
         save_image(fig, file_prefix)
         return fig

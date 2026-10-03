@@ -23,7 +23,7 @@ from gig_map_io.helpers.observed_expected import expected_counts, plot_observed_
 from gig_map_io.helpers.sidebar import add_category_sidebar
 from gig_map_io.helpers.style import (
     DENSE_MARKER_OPACITY, ESTIMATE_THRESH, FDR_THRESH, QUALITATIVE, TEMPLATE, THRESHOLD_LINE,
-    ZERO_LINE, group_colors, organism_colors, organism_order,
+    TOP_LEGEND, ZERO_LINE, group_colors, organism_colors, organism_order,
 )
 from .contrast_metagenomes import ASSOCIATION_LABELS, ContrastMetagenomes, volcano_figure
 from .dataset_dict import DatasetDict
@@ -290,7 +290,7 @@ class ContrastMetagenomesSet(DatasetDict):
             height=height,
             template=TEMPLATE,
             showlegend=annotations is not None,
-            legend=dict(orientation="h", x=0.0, xanchor="left", y=1.0, yanchor="bottom"),
+            legend=TOP_LEGEND,
             margin=dict(t=50),
         )
         fig.update_yaxes(title_text="Samples", row=1, col=1)
@@ -387,10 +387,8 @@ class ContrastMetagenomesSet(DatasetDict):
             groups=groups,
             observed=obs,
             expected=exp,
-            title=f"Do {self_label} and {comparator_label} agree on the bins both call?",
-            subtitle=subtitle,
             y_title="Pangenome bins",
-            caption=f"Each tick: direction in <b>{self_label}</b> (upper) "
+            caption=f"{subtitle}<br>Each tick: direction in <b>{self_label}</b> (upper) "
                     f"and <b>{comparator_label}</b> (lower)",
             width=width,
             height=height,

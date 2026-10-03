@@ -28,13 +28,17 @@ from .clustering import linkage_order
 #: that neighboring genes differ; genes unique to one row are gray
 SHARED_COLORS = [plt.get_cmap("tab20")(i) for i in range(20)]
 UNIQUE_COLOR = "#d9d9d9"
+
+#: The key to the colors, printed beneath every map
+KEY = "Same color: same gene.  Outlined: in the bin.  Gray: found in one of these genomes only."
 BIN_OUTLINE = "#111111"
 
-#: Row height and the arrow's share of it, in inches; the title band above
-#: the labels; and how tall one character of upright label is per point of
-#: font size (an inch per 72 points, less for a typical glyph)
+#: Row height and the arrow's share of it, in inches; the space above the
+#: labels; how tall one character of upright label is per point of font size
+#: (an inch per 72 points, less for a typical glyph); and one footnote line
 ROW_HEIGHT_IN = 0.32
-TITLE_HEIGHT_IN = 0.4
+TOP_PAD_IN = 0.1
+FOOTNOTE_LINE_IN = 0.2
 LABEL_INCH_PER_POINT_CHAR = 0.0085
 #: Upright labels are spaced this many font sizes apart
 LABEL_PITCH = 1.3
@@ -123,9 +127,9 @@ def plot_gene_context(
     bin_genes: pd.DataFrame,
     rows: Sequence[dict],
     window: tuple,
-    title: str,
     width: float,
     font_size: float,
+    note: str | None = None,
 ) -> plt.Figure:
     """
     Draw the context map.
@@ -141,6 +145,10 @@ def plot_gene_context(
         DataFrame with ``gene``, ``start``, ``stop``, ``in_bin``.
     window:
         (lo, hi) of the region drawn, in bp.
+    note:
+        A line for the footnote above the key to the colors, such as how many
+        of the bin's genes lie outside the window. Like every figure here
+        the map has no title.
     """
     lo, hi = window
     n_rows = len(rows)
@@ -149,16 +157,17 @@ def plot_gene_context(
     label_font, _ = fit_labels(len(bin_genes), font_size, width * 0.8 * 72)
     label_height = 0.5 + bin_genes["label"].str.len().max() * label_font * LABEL_INCH_PER_POINT_CHAR
     rows_height = ROW_HEIGHT_IN * n_rows
-    fig_height = TITLE_HEIGHT_IN + label_height + rows_height + 0.55 + 0.6
+    footnote = KEY if note is None else f"{note}\n{KEY}"
+    bottom_in = 0.4 + FOOTNOTE_LINE_IN * (footnote.count("\n") + 1)
+    fig_height = TOP_PAD_IN + label_height + rows_height + 0.55 + bottom_in
     # The left margin holds the longest row label
     longest = max((len(row["genome"]) for row in rows), default=10)
     left = min(0.4, 0.02 + longest * (font_size - 1) * 0.0085 / width)
     fig = plt.figure(figsize=(width, fig_height))
     gs = fig.add_gridspec(
         2, 1, height_ratios=[label_height, rows_height + 0.55], hspace=0.02,
-        left=left, right=0.98, top=1 - TITLE_HEIGHT_IN / fig_height, bottom=0.6 / fig_height,
+        left=left, right=0.98, top=1 - TOP_PAD_IN / fig_height, bottom=bottom_in / fig_height,
     )
-    fig.text(left, 1 - 0.5 * TITLE_HEIGHT_IN / fig_height, title, fontsize=font_size + 3, weight="bold", va="center")
     top = fig.add_subplot(gs[0])
     main = fig.add_subplot(gs[1], sharex=top)
 
@@ -199,10 +208,7 @@ def plot_gene_context(
     main.set_xticks(ticks)
     main.set_xticklabels([f"{(t - lo) / 1000:g}" for t in ticks], fontsize=font_size - 1)
     main.set_xlabel("kb", fontsize=font_size)
-    fig.text(
-        0.98, 0.012, "Same color: same gene.  Outlined: in the bin.  Gray: found in one of these genomes only.",
-        ha="right", va="bottom", fontsize=font_size - 1, color="#555555",
-    )
+    fig.text(0.98, 0.012, footnote, ha="right", va="bottom", fontsize=font_size - 1, color="#555555")
     return fig
 
 

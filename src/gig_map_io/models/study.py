@@ -327,7 +327,6 @@ class Study:
             enrichment,
             label="organism",
             axis_title="Organism",
-            title=f"{self.label} - organisms among the associated bins",
             qvalue_threshold=qvalue_threshold,
             order=organism_order(self.organisms),
             width=width,
@@ -363,7 +362,6 @@ class Study:
             enrichment.loc[enrichment["term"].isin(keep)],
             label="term",
             axis_title="Annotation term",
-            title=f"{self.label} - annotations among the associated bins",
             qvalue_threshold=qvalue_threshold,
             order=None,
             width=width,
@@ -399,7 +397,6 @@ class Study:
         return self.pangenome(organism).bin_gene_map(bin, **kwargs)
 
     def bin_context_map(self, organism: str, bin: str, **kwargs: Any):
-        kwargs.setdefault("title", f"{organism} {bin} and its neighborhood")
         return self.pangenome(organism).bin_context_map(bin, **kwargs)
 
     def genome_names(self, cache: str | Path) -> pd.DataFrame:
@@ -414,7 +411,6 @@ class Study:
 
 
     def volcano_plot(self, **kwargs: Any) -> go.Figure:
-        kwargs.setdefault("title", self.label)
         return self.contrasts.volcano_plot(**kwargs)
 
     def bin_abundance_heatmap(self, features, **kwargs: Any) -> go.Figure:

@@ -89,7 +89,6 @@ def plot_enrichment(
     enrichment: pd.DataFrame,
     label: str,
     axis_title: str,
-    title: str,
     qvalue_threshold: float,
     order: List[str] | None,
     width: int,
@@ -112,7 +111,7 @@ def plot_enrichment(
     When ``height`` is ``None`` it follows the number of categories, so that a
     figure of three terms is not drawn on the same canvas as one of twenty.
 
-    ``show_legend`` is off for a figure of one set whose title already names it.
+    ``show_legend`` is off for a figure of one set, where a legend would name nothing.
 
     ``mark`` is what is printed beside each odds-ratio bar: a star where the
     q-value clears the threshold (``"star"``), or the q-value itself
@@ -173,14 +172,13 @@ def plot_enrichment(
     fig.update_layout(
         width=width,
         height=height if height is not None else max(320, 24 * n_categories + 190),
-        title=title,
         template=TEMPLATE,
         barmode="group",
         showlegend=show_legend,
         legend=dict(
             title_text="", orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom",
         ),
-        margin=dict(t=95 if show_legend else 70),
+        margin=dict(t=50 if show_legend else 30),
         # Up to ten bins, a gridline per bin reads as a count; past that the
         # automatic ticks are what is legible
         xaxis=dict(title="Bins in set", dtick=1 if df["n_foreground"].max() <= 10 else None),

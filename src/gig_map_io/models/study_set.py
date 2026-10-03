@@ -26,7 +26,7 @@ from ..helpers.positivity import plot_feature_positivity, plot_positivity_heatma
 from ..helpers.save_image import save_image
 from ..helpers.style import (
     DENSE_MARKER_OPACITY, ESTIMATE_THRESH, FDR_THRESH, LARGE_QUALITATIVE, PRIMARY, TEMPLATE,
-    THRESHOLD_LINE, TOP_LEGEND, group_colors, legend_above, organism_colors, organism_order,
+    SHORT_LEGEND, THRESHOLD_LINE, TOP_LEGEND, group_colors, legend_above, organism_colors, organism_order,
 )
 from ..helpers.supervised import fit_classifier
 from .study import Study
@@ -188,6 +188,10 @@ class StudySet:
         fig.update_xaxes(showticklabels=False, ticks="")
         fig.update_yaxes(showticklabels=False, ticks="")
         fig.update_layout(showlegend=show_legend)
+        # A short legend (disease, study) sits above the plot as it does in
+        # every other figure; a long one keeps the right margin
+        if order and len(order) <= SHORT_LEGEND:
+            fig.update_layout(legend=TOP_LEGEND, margin=dict(t=60))
         save_image(fig, file_prefix)
         return fig
 
@@ -369,7 +373,6 @@ class StudySet:
             results, y="cramers_v", study_order=self.study_order,
             labels={"cramers_v": "Cram&#233;r's V"},
             hover_data={"p_value": ":.2e", "cramers_v": ":.2f"},
-            title="Association between community type and disease state",
             footnote="Chi-squared test: * p < 0.05, ** p < 0.01, *** p < 0.001",
             width=width, height=height, text="stars",
         )
@@ -385,7 +388,6 @@ class StudySet:
         study_order: List[str],
         labels: dict,
         hover_data: dict,
-        title: str,
         width: int,
         height: int,
         footnote: str | None = None,
@@ -407,7 +409,6 @@ class StudySet:
             category_orders={"study": study_order, "organism": organism_order(summary["organism"])},
             labels={"organism": "Organism", "study": "Study", **labels},
             hover_data=hover_data,
-            title=title,
             width=width,
             height=height,
             **bar_kwargs,
@@ -416,7 +417,7 @@ class StudySet:
         fig.update_layout(
             bargroupgap=0.05,
             legend=TOP_LEGEND,
-            margin=dict(t=95 if title else 60, b=130 if footnote else 80),
+            margin=dict(t=60, b=130 if footnote else 80),
         )
         if footnote:
             fig.add_annotation(
@@ -574,9 +575,9 @@ class StudySet:
         fig.update_yaxes(title_text="")
         fig.add_annotation(
             text="Proportion of genomes", x=0, xref="paper", y=0.5, yref="paper",
-            xshift=-58, textangle=-90, showarrow=False, font=dict(size=14),
+            xshift=-68, textangle=-90, showarrow=False, font=dict(size=14),
         )
-        fig.update_layout(margin=dict(t=80))
+        fig.update_layout(margin=dict(t=80, l=85))
         legend_above(fig)
         save_image(fig, file_prefix)
         return fig
@@ -715,15 +716,15 @@ class StudySet:
         )
         fig = self._organism_study_bars(
             summary, y="auc_mean", study_order=[study.label for study in self.studies],
-            labels={"auc_mean": "Validation ROC-AUC"}, hover_data={"auc_std": ":.3f"}, title="",
+            labels={"auc_mean": "Validation ROC-AUC"}, hover_data={"auc_std": ":.3f"},
             width=width, height=height, error_y="auc_std",
         )
         fig.update_traces(error_y=dict(thickness=1, width=4))
-        fig.add_hline(
-            y=0.5, annotation_text="chance", annotation_position="bottom right",
-            annotation_font_color="#555555", **THRESHOLD_LINE,
-        )
-        fig.update_yaxes(range=[0.4, 1.05])
+        # The line at 0.5 is chance; like the other reference lines it carries
+        # no label of its own
+        fig.add_hline(y=0.5, **THRESHOLD_LINE)
+        ceiling = (summary["auc_mean"] + summary["auc_std"]).max()
+        fig.update_yaxes(range=[0.4, min(1.0, ceiling + 0.05)])
         save_image(fig, file_prefix)
         return fig
 
@@ -742,7 +743,7 @@ class StudySet:
         """
         df = shap.loc[shap["organism"] == organism].sort_values(["combined", "bin"], ascending=[False, True])
         fig, x_label, y_label, _ = self._shap_scatter(
-            df, title=f"{organism}: bin importance in each study", width=width, height=height,
+            df, width=width, height=height,
         )
         fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, color=PRIMARY))
         top = df.head(n_labelled)
@@ -754,7 +755,7 @@ class StudySet:
         save_image(fig, file_prefix)
         return fig
 
-    def _shap_scatter(self, df: pd.DataFrame, title: str, width: int, height: int, **scatter_kwargs):
+    def _shap_scatter(self, df: pd.DataFrame, width: int, height: int, **scatter_kwargs):
         """
         Importance to the first study's model against importance to the
         second's, on equal axes with the diagonal drawn. Returns the figure,
@@ -775,7 +776,6 @@ class StudySet:
                 y_label: f"Mean |SHAP|, {y_label}",
                 "organism": "Organism",
             },
-            title=title,
             width=width,
             height=height,
             range_x=[0, limit],
@@ -801,7 +801,7 @@ class StudySet:
         """
         df = shap.sort_values(["combined", "organism", "bin"], ascending=[False, True, True])
         fig, x_label, y_label, limit = self._shap_scatter(
-            df, title="Bin importance in each study, all organisms", width=width, height=height,
+            df, width=width, height=height,
             color="organism",
             color_discrete_map=organism_colors(df["organism"]),
             category_orders={"organism": organism_order(df["organism"])},
@@ -860,7 +860,6 @@ class StudySet:
             enrichment,
             label="organism",
             axis_title="Organism",
-            title="Organisms among the bins the models rely on most",
             qvalue_threshold=qvalue_threshold,
             order=organism_order(enrichment["organism"]),
             width=width,
@@ -913,7 +912,6 @@ class StudySet:
                 "strongest_pair": "Strongest pair",
             },
             hover_data={"share": ":.2f", "strongest_pair": True, "strongest_over_main": ":.2f"},
-            title="How much each model relies on bins acting together",
             footnote=f"Attribution among each model's {n_top} most important bins, split into main effects and pairwise interactions",
             width=width, height=height,
         )

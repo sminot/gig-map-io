@@ -677,7 +677,6 @@ class Pangenome(Dataset):
         font_size: float = 8.0,
         remove_gene_id: bool = True,
         remove_org_tag: bool = True,
-        title: str | None = None,
         genome_names: Dict[str, str] | None = None,
         file_prefix: str | None = None,
     ) -> plt.Figure:
@@ -695,7 +694,7 @@ class Pangenome(Dataset):
         of every row are also written as CSV.
 
         A bin's genes need not sit together: the window covers the largest
-        run of them with no gap over ``max_gap`` bp, and the title says how
+        run of them with no gap over ``max_gap`` bp, and the footnote says how
         many lie elsewhere. ``genome_names`` labels the rows (keyed by the
         genome's file name, as in ``helpers.ncbi.genome_names``); a genome
         it does not name is labeled by its accession.
@@ -772,16 +771,13 @@ class Pangenome(Dataset):
         for row in ordered:
             row["genome_label"] = (genome_names or {}).get(row["genome"]) or _short_genome_name(row["genome"])
 
-        title = title or f"{bin} and its neighborhood"
-        if n_elsewhere:
-            title += f" ({n_elsewhere} of its {n_bin_genes} genes lie outside this window)"
         fig = plot_gene_context(
             bin_genes,
             [dict(row, genome=row["genome_label"]) for row in ordered],
             window,
-            title=title,
             width=width,
             font_size=font_size,
+            note=f"{n_elsewhere} of the bin's {n_bin_genes} genes lie outside this window." if n_elsewhere else None,
         )
         save_image(fig, file_prefix)
         if file_prefix is not None:
@@ -844,7 +840,6 @@ class Pangenome(Dataset):
         bins: str | List[str],
         width: int = 500,
         height: int = 400,
-        title: str = "Bin presence by genome",
         tree_proportion: float = 0.5,
         horizontal_spacing: float = 0.,
         file_prefix: str | None = None
@@ -891,7 +886,6 @@ class Pangenome(Dataset):
             height=height,
             width=width,
             template=SIMPLE_TEMPLATE,
-            title=dict(text=title, x=0.5, xanchor="center"),
             margin=dict(r=20),
         )
         fig.update_yaxes(visible=False)

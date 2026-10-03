@@ -25,6 +25,9 @@ from .style import PRIMARY, TEMPLATE, TOP_LEGEND
 
 EXPECTED_COLOR = "#c3cedb"
 
+#: Height of one line of caption beneath the plot
+CAPTION_LINE_PX = 18
+
 #: Below this expected count a fold change says more about rounding than about
 #: the data, and the chi-squared approximation is unreliable
 MIN_EXPECTED_TO_LABEL = 5
@@ -76,8 +79,6 @@ def plot_observed_expected(
     groups: Sequence[str],
     observed: Sequence[float],
     expected: Sequence[float],
-    title: str,
-    subtitle: str,
     y_title: str,
     caption: str | None = None,
     facet_groups: bool = False,
@@ -95,13 +96,15 @@ def plot_observed_expected(
     that the bars line up vertically.
 
     A fold change is printed over each pair whose expected count reaches
-    ``MIN_EXPECTED_TO_LABEL``.
+    ``MIN_EXPECTED_TO_LABEL``. Like every figure here it has no title; the
+    test result and anything else a reader needs go in ``caption``, which may
+    run to several lines (``<br>``) beneath the plot.
     """
     if not (len(ticks) == len(groups) == len(observed) == len(expected)):
         raise ValueError("ticks, groups, observed and expected must be the same length")
     observed, expected = list(observed), list(expected)
     draw = _plot_faceted if facet_groups else _plot_in_line
-    fig = draw(list(ticks), list(groups), observed, expected, title, subtitle, y_title, caption, width, height)
+    fig = draw(list(ticks), list(groups), observed, expected, y_title, caption, width, height)
     save_image(fig, file_prefix)
     return fig
 
@@ -128,29 +131,31 @@ def _label_fold_change(fig: go.Figure, x, observed: float, expected: float, row:
 
 
 def _finish(
-    fig: go.Figure, title: str, subtitle: str, y_title: str, caption: str | None,
+    fig: go.Figure, y_title: str, caption: str | None,
     width: int, height: int, margin: dict, y_title_shift: int, caption_shift: int,
 ) -> None:
-    """The title block, legend, margins, one y-axis title for every panel, and the caption."""
+    """The legend, margins, one y-axis title for every panel, and the caption."""
+    caption_lines = caption.count("<br>") + 1 if caption else 0
     fig.update_layout(
         template=TEMPLATE, width=width, height=height,
-        title=dict(text=f"{title}<br><sub>{subtitle}</sub>", x=0.5),
         legend=TOP_LEGEND,
-        margin=dict(margin, t=120 + 18 * subtitle.count("<br>")),
+        margin=dict(margin, t=50, b=margin["b"] + CAPTION_LINE_PX * caption_lines),
     )
     fig.update_xaxes(tickfont=dict(size=13))
+    # Drawn as an annotation so that it spans every panel; sized and colored
+    # as the template draws an axis title
     fig.add_annotation(
         x=0, xref="paper", y=0.5, yref="paper", xshift=y_title_shift, textangle=-90,
-        text=y_title, showarrow=False, font=dict(size=13, color="#2a3f5f"),
+        text=y_title, showarrow=False, font=dict(size=14, color="#222222"),
     )
     if caption:
         fig.add_annotation(
             x=0.5, xref="paper", y=0, yref="paper", yshift=caption_shift, xanchor="center",
-            showarrow=False, font=dict(size=11, color="#555555"), text=caption,
+            yanchor="top", showarrow=False, font=dict(size=11, color="#555555"), text=caption,
         )
 
 
-def _plot_in_line(ticks, groups, observed, expected, title, subtitle, y_title, caption, width, height) -> go.Figure:
+def _plot_in_line(ticks, groups, observed, expected, y_title, caption, width, height) -> go.Figure:
     """Every category along one axis, with group headings beneath and an axis break where the counts demand it."""
     # Positions, not the tick strings themselves: a categorical axis collapses
     # repeated labels onto one position, and the same label can legitimately
@@ -208,13 +213,13 @@ def _plot_in_line(ticks, groups, observed, expected, title, subtitle, y_title, c
 
     fig.update_yaxes(title_text="", row=rows, col=1)
     _finish(
-        fig, title, subtitle, y_title, caption, width, height,
-        margin=dict(b=130 if caption else 105, l=85), y_title_shift=-68, caption_shift=-96,
+        fig, y_title, caption, width, height,
+        margin=dict(b=100, l=85), y_title_shift=-68, caption_shift=-82,
     )
     return fig
 
 
-def _plot_faceted(ticks, groups, observed, expected, title, subtitle, y_title, caption, width, height) -> go.Figure:
+def _plot_faceted(ticks, groups, observed, expected, y_title, caption, width, height) -> go.Figure:
     """
     One row per group, labeled in the right margin.
 
@@ -250,7 +255,7 @@ def _plot_faceted(ticks, groups, observed, expected, title, subtitle, y_title, c
 
     fig.update_layout(barmode="group", bargap=0.42, bargroupgap=0.05)
     _finish(
-        fig, title, subtitle, y_title, caption, width, height,
-        margin=dict(b=80 if caption else 60, l=85, r=98), y_title_shift=-58, caption_shift=-52,
+        fig, y_title, caption, width, height,
+        margin=dict(b=55, l=85, r=98), y_title_shift=-58, caption_shift=-40,
     )
     return fig
