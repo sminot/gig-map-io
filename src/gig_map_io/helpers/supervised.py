@@ -25,8 +25,16 @@ MODEL_PARAMS = dict(
     n_jobs=-1,
 )
 
-#: Smallest number of samples in the minority class worth fitting a model to.
+#: Smallest number of participants in the minority class worth fitting a
+#: model to. Counted in participants rather than samples, because a split
+#: moves a participant's samples together.
 MIN_CLASS_SIZE = 5
+
+#: The validation fold is one of this many, about a quarter of the samples
+VALIDATION_FOLDS = 4
+
+#: The early-stopping fold is one of this many, from what is left to fit on
+STOPPING_FOLDS = 5
 
 
 @dataclass
@@ -37,7 +45,7 @@ class ClassifierResult:
     Attributes
     ----------
     replicate_auc:
-        Validation ROC-AUC from each train/test split.
+        Validation ROC-AUC from each split, no participant on both sides.
     shap:
         Mean absolute SHAP value per bin, from a model fit to all samples.
     interactions:
@@ -57,6 +65,7 @@ class ClassifierResult:
 def fit_classifier(
     features: pd.DataFrame,
     labels: pd.Series,
+    participants: pd.Series,
     n_replicates: int = 10,
     n_estimators: int = 400,
     n_interaction_features: int = 10,
@@ -66,18 +75,28 @@ def fit_classifier(
     Fit replicate classifiers to measure how separable the two classes are,
     then one model on all samples to attribute that separation to bins.
 
-    Returns ``None`` when one class has fewer than ``MIN_CLASS_SIZE`` samples.
+    ``participants`` names the person each sample came from. Every split keeps
+    a participant's samples on one side, so no model is validated on a person
+    it was fit to; cohorts that sampled each person many times would
+    otherwise be scored on how well a model recognizes individuals.
+
+    Returns ``None`` when one class has fewer than ``MIN_CLASS_SIZE``
+    participants.
     """
     import xgboost as xgb
 
     labeled = labels.dropna()
     X = np.log1p(features.reindex(index=labeled.index))
     y = labeled.values.astype(int)
+    groups = participants.reindex(labeled.index)
+    if groups.isna().any():
+        raise ValueError(f"{int(groups.isna().sum())} labeled samples have no participant")
+    groups = groups.values
 
-    if min(y.sum(), len(y) - y.sum()) < MIN_CLASS_SIZE:
+    if min(len(set(groups[y == label])) for label in (0, 1)) < MIN_CLASS_SIZE:
         return None
 
-    replicates = [_fit_one(X, y, seed, n_estimators) for seed in range(n_replicates)]
+    replicates = [_fit_one(X, y, groups, seed, n_estimators) for seed in range(n_replicates)]
 
     # Refit on every sample, with early stopping replaced by the typical number
     # of rounds the replicate models settled on
@@ -96,18 +115,33 @@ def fit_classifier(
     )
 
 
-def _fit_one(X: pd.DataFrame, y: np.ndarray, seed: int, n_estimators: int):
-    """Fit one classifier on a random split, returning it with its validation AUC."""
+def _grouped_split(y: np.ndarray, groups: np.ndarray, n_folds: int, seed: int) -> tuple:
+    """
+    Row positions of one fold (about ``1 / n_folds`` of the samples) and of
+    the rest, stratified by class, with every group wholly on one side.
+    """
+    from sklearn.model_selection import StratifiedGroupKFold
+
+    folds = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    rest, fold = next(folds.split(np.zeros(len(y)), y, groups))
+    if len(np.unique(y[fold])) < 2 or len(np.unique(y[rest])) < 2:
+        raise ValueError(
+            f"A split by participant with seed {seed} left one side with a single class; "
+            f"{len(np.unique(groups))} participants are too few for {n_folds} folds"
+        )
+    return rest, fold
+
+
+def _fit_one(X: pd.DataFrame, y: np.ndarray, groups: np.ndarray, seed: int, n_estimators: int):
+    """Fit one classifier on a split by participant, returning it with its validation AUC."""
     import xgboost as xgb
     from sklearn.metrics import roc_auc_score
-    from sklearn.model_selection import train_test_split
 
-    X_fit, X_val, y_fit, y_val = train_test_split(
-        X, y, test_size=0.25, random_state=seed, stratify=y
-    )
-    X_fit, X_stop, y_fit, y_stop = train_test_split(
-        X_fit, y_fit, test_size=0.2, random_state=seed, stratify=y_fit
-    )
+    fit, val = _grouped_split(y, groups, VALIDATION_FOLDS, seed)
+    train, stop = _grouped_split(y[fit], groups[fit], STOPPING_FOLDS, seed)
+    X_val, y_val = X.iloc[val], y[val]
+    X_fit, y_fit = X.iloc[fit].iloc[train], y[fit][train]
+    X_stop, y_stop = X.iloc[fit].iloc[stop], y[fit][stop]
 
     model = xgb.XGBClassifier(
         n_estimators=n_estimators,

@@ -621,7 +621,8 @@ class StudySet:
     ) -> Dict[str, pd.DataFrame]:
         """
         For each organism, fit a classifier per study separating cases from
-        controls on that organism's bin abundance.
+        controls on that organism's bin abundance, with every validation split
+        made by participant.
 
         Returns three tables: ``replicates`` (validation ROC-AUC per split),
         ``shap`` (mean absolute SHAP per bin, one column per study, plus their
@@ -638,9 +639,13 @@ class StudySet:
             per_study = {}
             for study in self.studies:
                 contrast = study.contrast(organism)
+                people = study.sample_metadata(["study", "participant"])
                 result = fit_classifier(
                     contrast.abund,
                     contrast.metadata[study.parameter],
+                    # Qualified by cohort, so two cohorts' participant IDs cannot meet
+                    (people["study"].astype(str) + "/" + people["participant"].astype(str))
+                    .where(people["participant"].notna()),
                     n_replicates=n_replicates,
                     n_interaction_features=n_interaction_features,
                 )

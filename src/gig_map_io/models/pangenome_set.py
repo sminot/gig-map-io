@@ -1,3 +1,4 @@
+import re
 from functools import cached_property
 from typing import Dict
 
@@ -14,6 +15,108 @@ from gig_map_io.helpers.style import SIMPLE_TEMPLATE, TEMPLATE, organism_colors,
 
 from .pangenome import Pangenome
 from .dataset_dict import DatasetDict
+
+
+#: A gene product name ends with the organism in brackets, and some begin with
+#: qualifiers ("MULTISPECIES:", "MAG:", "MAG TPA:", "fOG:"). A colon inside a
+#: name, as in "sodium:solute symporter", is part of it.
+NAME_PREFIX = re.compile(r"^(?:(?:MULTISPECIES|MAG|TPA|fOG):?\s+)+")
+
+#: A locus tag, as in "hypothetical protein DXA20_03275": unique to one gene
+LOCUS_TAG = re.compile(r"^[A-Za-z][A-Za-z0-9]*_[0-9]+$")
+
+#: Words that say nothing about function on their own. A term made only of
+#: these (and of short tokens such as "A" or "II") is not a functional term
+GENERIC_WORDS = frozenset({
+    "protein", "proteins", "family", "superfamily", "domain", "domains",
+    "domain-containing", "containing", "subunit", "subunits", "type", "like",
+    "putative", "hypothetical", "uncharacterized", "predicted", "probable",
+    "partial", "fragment", "component", "components", "chain", "region",
+    "system", "related", "associated", "dependent", "involved", "unknown",
+    "function", "conserved", "unnamed", "n-terminal", "c-terminal", "terminal",
+})
+
+#: Joining words, which leave a run hanging when they start or end it
+FUNCTION_WORDS = frozenset({
+    "of", "and", "or", "the", "in", "to", "for", "with", "by", "a", "an",
+    "on", "from", "at", "as", "via",
+})
+
+#: A term may not begin or end on one of these: "conjugal transfer protein"
+#: only repeats "conjugal transfer". "type" may begin one, as in "type VI
+#: secretion".
+EDGE_WORDS = FUNCTION_WORDS | (GENERIC_WORDS - {"type"})
+
+
+def _strip_organism(name: str) -> str:
+    """``name`` without its final bracketed group, matching nested brackets."""
+    if not name.endswith("]"):
+        return name
+    depth = 0
+    for i in range(len(name) - 1, -1, -1):
+        if name[i] == "]":
+            depth += 1
+        elif name[i] == "[":
+            depth -= 1
+            if depth == 0:
+                return name[:i].rstrip()
+    return name
+
+
+def _balanced(text: str) -> bool:
+    """Whether every bracket in ``text`` is closed, in order."""
+    pairs = {")": "(", "]": "[", "}": "{"}
+    stack = []
+    for char in text:
+        if char in "([{":
+            stack.append(char)
+        elif char in pairs:
+            if not stack or stack.pop() != pairs[char]:
+                return False
+    return not stack
+
+
+def _informative(words: list) -> bool:
+    """Whether a run of words could name a function."""
+    if words[0].lower() in EDGE_WORDS or words[-1].lower() in EDGE_WORDS:
+        return False
+    # "VI secretion" is a fragment of "type VI secretion"; a short token may
+    # end a run ("subunit A") but not start one
+    if len(words) > 1 and len(words[0]) <= 2:
+        return False
+    if all(word.lower() in GENERIC_WORDS or len(word) <= 2 for word in words):
+        return False
+    # A bracketed qualifier on its own, such as "[Fe]" or "(ATP)"
+    if len(words) == 1 and words[0][0] in "([{" and words[0][-1] in ")]}":
+        return False
+    return _balanced(" ".join(words))
+
+
+def annotation_terms(name: str) -> set:
+    """
+    The functional terms in one gene product name: every run of consecutive
+    words that could name a function.
+
+    The organism in brackets at the end and a qualifier such as
+    "MULTISPECIES:" at the start are removed, and so are locus tags. A double
+    space is where a comma stood in the original name, and no term spans one.
+    A run is dropped if it begins or ends on a joining word ("of", "in") or a
+    generic one ("protein", "family", "subunit", "putative"; "type" may
+    begin a run), if it starts on a token of two characters or fewer, if
+    every word in it is generic or that short, if it is a bracketed
+    qualifier alone ("[Fe]"), or if its
+    brackets do not balance, which happens where a run cuts a chemical name
+    in two.
+    """
+    name = NAME_PREFIX.sub("", _strip_organism(name))
+    terms = set()
+    for clause in re.split(r"\s{2,}", name):
+        words = [word for word in clause.split() if not LOCUS_TAG.match(word)]
+        for start in range(len(words)):
+            for stop in range(start + 1, len(words) + 1):
+                if _informative(words[start:stop]):
+                    terms.add(" ".join(words[start:stop]))
+    return terms
 
 
 class PangenomeSet(DatasetDict):
@@ -62,7 +165,8 @@ class PangenomeSet(DatasetDict):
     ) -> pd.DataFrame:
         """
         Find annotation terms statistically over-represented in the given set of bins
-        compared to the background of all other bins.
+        compared to the background of all other bins. What counts as a term is
+        set out in :func:`annotation_terms`.
 
         Parameters
         ----------
@@ -85,24 +189,13 @@ class PangenomeSet(DatasetDict):
             Sorted by pvalue ascending.
         """
 
-        def _ngrams(text: str) -> set:
-            words = text.split()
-            return {" ".join(words[i:j]) for i in range(len(words)) for j in range(i + 1, len(words) + 1)}
-
-        def _sanitize_combined_name(combined_name: str) -> str:
-            if combined_name.endswith("]") and "[" in combined_name:
-                combined_name = combined_name.rsplit("[", 1)[0]
-            if combined_name.startswith("MULTISPECIES: "):
-                combined_name = combined_name.replace("MULTISPECIES: ", "")
-            return combined_name
-
         # Drop rows where bin is NaN
         gb = self.gene_bins.dropna(subset=["bin"])
 
-        # Build bin_terms: (pangenome, bin) -> set of n-gram terms
+        # Build bin_terms: (pangenome, bin) -> set of terms
         bin_terms = (
             gb.groupby(["pangenome", "bin"])["combined_name"]
-            .apply(lambda names: set().union(*[_ngrams(_sanitize_combined_name(n)) for n in names]))
+            .apply(lambda names: set().union(*[annotation_terms(n) for n in names]))
         )
 
         # Make sure that all of the features are in the pangenome set
