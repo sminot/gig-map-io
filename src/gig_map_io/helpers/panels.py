@@ -50,6 +50,15 @@ DEFAULT_FONT_PT = 7.0
 PLOTLY_DEFAULT_WIDTH = 700.0
 PLOTLY_DEFAULT_HEIGHT = 450.0
 PLOTLY_DEFAULT_FONT = 12.0
+PLOTLY_DEFAULT_MARGIN = dict(l=80, r=80, t=100, b=80)
+
+#: Room a legend entry's symbol and padding take, in the figure's own pixels
+LEGEND_SYMBOL_PX = 50.0
+#: Height of one entry of a vertical legend, in the figure's own pixels
+LEGEND_ENTRY_PX = 24.0
+
+#: Narrowest data region a panel is drawn with, in the figure's own pixels
+MIN_DATA_PX = 120.0
 
 LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -185,9 +194,14 @@ def render_at_print_size(
     base font at ``font_pt``. The page is drawn larger by the ratio of the
     figure's font size to ``font_pt``, with every pixel size the figure
     gives left as it is, so the caller's scaling brings the text to
-    ``font_pt`` and keeps everything else in the proportions it had on
-    screen. The height keeps the figure's proportions unless ``height`` is
-    given, and ``max_height`` cuts either down.
+    ``font_pt``.
+
+    A narrow cell leaves less room beside the text than the screen did, and
+    keeping the whole canvas's proportions would flatten the data region:
+    the margins hold text of a fixed size and so take a larger share of the
+    width than of the height. Instead the data region keeps the shape it had
+    on screen, and the page is as tall as that region plus the margins.
+    ``height`` overrides that, and ``max_height`` caps either.
     """
     layout = fig.to_dict()["layout"]
     template_layout = (layout.get("template") or {}).get("layout", {})
@@ -196,19 +210,54 @@ def render_at_print_size(
         or (template_layout.get("font") or {}).get("size")
         or PLOTLY_DEFAULT_FONT
     )
-    original_width = layout.get("width") or PLOTLY_DEFAULT_WIDTH
-    original_height = layout.get("height") or PLOTLY_DEFAULT_HEIGHT
+    enlargement = base_font / font_pt
+    canvas_width = width * enlargement
+
     if height is None:
-        height = width * original_height / original_width
+        original_width = layout.get("width") or PLOTLY_DEFAULT_WIDTH
+        original_height = layout.get("height") or PLOTLY_DEFAULT_HEIGHT
+        margin = {**PLOTLY_DEFAULT_MARGIN, **(template_layout.get("margin") or {}), **(layout.get("margin") or {})}
+        legend_width, legend_height = _side_legend_px(fig, base_font)
+        across, down = margin["l"] + margin["r"] + legend_width, margin["t"] + margin["b"]
+        aspect = (original_height - down) / (original_width - across)
+        # A cell too narrow for the margins alone still gets a data region
+        data_width = max(canvas_width - across, MIN_DATA_PX)
+        height = (down + max(data_width * aspect, legend_height)) / enlargement
         if max_height is not None and height > max_height:
+            # Too tall for its cell: narrow the panel, so the data region
+            # keeps its shape, and let the cell center it
+            data_width = max((max_height * enlargement - down) / aspect, MIN_DATA_PX)
+            canvas_width = across + data_width
             height = max_height
-            width = max_height * original_width / original_height
     elif max_height is not None:
         height = min(height, max_height)
 
-    enlargement = base_font / font_pt
-    page = go.Figure(fig).update_layout(width=width * enlargement, height=height * enlargement)
+    page = go.Figure(fig).update_layout(width=canvas_width, height=height * enlargement)
     return PdfReader(io.BytesIO(page.to_image(format="pdf"))).pages[0]
+
+
+def _side_legend_px(fig: go.Figure, font_px: float) -> tuple:
+    """
+    Roughly how wide and how tall a legend down the right margin is, in the
+    figure's own pixels. Plotly widens the margin to fit it, so its width is
+    not in the margin the figure declares, and it hangs from the top of the
+    data region, so that region must be at least as tall. Zero for a
+    horizontal or hidden legend.
+    """
+    layout = fig.layout
+    if layout.showlegend is False or layout.legend.orientation == "h":
+        return 0.0, 0.0
+    names = list(dict.fromkeys(
+        str(trace.name) for trace in fig.data if trace.name and trace.showlegend is not False
+    ))
+    if not names:
+        return 0.0, 0.0
+    title = layout.legend.title.text or ""
+    longest = max(len(text) for text in names + [title])
+    # A symbol and padding, then the text at about 0.55 of the font size per character
+    width = LEGEND_SYMBOL_PX + 0.55 * font_px * longest
+    height = LEGEND_ENTRY_PX * len(names) + (LEGEND_ENTRY_PX if title else 0)
+    return width, height
 
 
 def _wrap_rows(panels: Sequence[Dict[str, Any]], columns: int) -> List[List[tuple]]:

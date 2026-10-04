@@ -194,10 +194,11 @@ A plotly figure is drawn for the screen, and shrinking its PDF into a 55 mm
 cell leaves the text unreadable. So when the `.json` that `save_image` wrote
 sits beside a panel's PDF, the panel is drawn again for print: on a canvas
 larger than its cell by the ratio of the figure's font size to `font_pt`
-(default 7), then scaled into the cell, so the text lands at `font_pt` and
-everything else keeps its on-screen proportions. A panel may carry its own
-`font_pt`, and `height_mm` to be drawn that tall rather than in the
-proportions it had, which gives a legend room in a narrow cell. A PDF with no
+(default 7), then scaled into the cell, so the text lands at `font_pt`. The
+data region keeps the shape it had on screen, and the panel is as tall as that
+region plus its margins (and at least as tall as a legend down its right side
+needs), so a narrow cell does not flatten the plot. A panel may carry its own
+`font_pt`, and `height_mm` to override the height. A PDF with no
 specification beside it, such as a matplotlib figure drawn in inches, is placed
 as it is. Either way the content stays vector.
 
