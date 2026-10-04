@@ -31,6 +31,9 @@ UNIQUE_COLOR = "#d9d9d9"
 
 #: The key to the colors, printed beneath every map
 KEY = "Same color: same gene.  Outlined: in the bin.  Gray: found in one of these genomes only."
+
+#: What the rows below the dashed line are, printed when there are any
+WITHOUT_BIN_KEY = "Below the dashed line: genomes with the bin's neighbors but not the bin, broken where it would sit."
 BIN_OUTLINE = "#111111"
 
 #: Row height and the arrow's share of it, in inches; the space above the
@@ -142,7 +145,10 @@ def plot_gene_context(
     rows:
         One dict per genome: ``genome`` (display name), ``extent`` (the part
         of the contig inside the window, as (lo, hi)), and ``genes``, a
-        DataFrame with ``gene``, ``start``, ``stop``, ``in_bin``.
+        DataFrame with ``gene``, ``start``, ``stop``, ``in_bin``. A row may
+        carry ``segments``, the stretches of contig to draw where it is not
+        continuous, and ``without_bin`` for a genome shown for context that
+        lacks the bin; those come last, below a dashed line.
     window:
         (lo, hi) of the region drawn, in bp.
     note:
@@ -157,7 +163,10 @@ def plot_gene_context(
     label_font, _ = fit_labels(len(bin_genes), font_size, width * 0.8 * 72)
     label_height = 0.5 + bin_genes["label"].str.len().max() * label_font * LABEL_INCH_PER_POINT_CHAR
     rows_height = ROW_HEIGHT_IN * n_rows
-    footnote = KEY if note is None else f"{note}\n{KEY}"
+    key = KEY
+    if any(row.get("without_bin") for row in rows):
+        key = f"{WITHOUT_BIN_KEY}\n{key}"
+    footnote = key if note is None else f"{note}\n{key}"
     bottom_in = 0.4 + FOOTNOTE_LINE_IN * (footnote.count("\n") + 1)
     fig_height = TOP_PAD_IN + label_height + rows_height + 0.55 + bottom_in
     # The left margin holds the longest row label
@@ -188,7 +197,10 @@ def plot_gene_context(
 
     for i, row in enumerate(rows):
         y = n_rows - 1 - i
-        main.plot(row["extent"], [y, y], color="#8a8f98", linewidth=1.0, zorder=1, solid_capstyle="butt")
+        if row.get("without_bin") and not rows[i - 1].get("without_bin"):
+            main.axhline(y + 0.5, color="#8a8f98", linewidth=0.8, linestyle=(0, (4, 3)), zorder=0)
+        for segment in row.get("segments", [row["extent"]]):
+            main.plot(segment, [y, y], color="#8a8f98", linewidth=1.0, zorder=1, solid_capstyle="butt")
         for _, gene in row["genes"].iterrows():
             face = colors.get(gene["gene"], UNIQUE_COLOR)
             if gene["in_bin"]:

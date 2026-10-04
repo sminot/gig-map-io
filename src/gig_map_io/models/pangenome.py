@@ -57,6 +57,30 @@ def _largest_cluster(genes: pd.DataFrame, max_gap: int) -> pd.DataFrame:
     return ordered.iloc[best]
 
 
+def _fit_to_reference(reference: pd.DataFrame, contig: pd.DataFrame):
+    """
+    The orientation and shift that land a contig's genes closest to where
+    ``reference`` puts them, as (sign, offset): a contig coordinate ``x``
+    maps to ``sign * x + offset``. ``reference`` has a median ``start`` and
+    ``stop`` per gene; ``contig`` has each gene's ``qstart`` and ``qend``.
+    """
+    shared = contig.join(reference, how="inner")
+    best = None
+    for sign in (1, -1):
+        offsets = np.concatenate([
+            shared["start"] - sign * shared["qstart"], shared["stop"] - sign * shared["qend"],
+        ])
+        fit = (float(np.std(offsets)), sign, float(np.median(offsets)))
+        if best is None or fit[0] < best[0]:
+            best = fit
+    return best[1], best[2]
+
+
+def _mean_jaccard(genes: set, others: List[set]) -> float:
+    """How much ``genes`` shares with each of ``others`` on average, as Jaccard similarity."""
+    return float(np.mean([len(genes & other) / len(genes | other) for other in others if genes | other]))
+
+
 def _short_genome_name(genome: str) -> str:
     """An assembly file name reduced to its accession and strain, e.g. GCF_000210575.1 ASM21057v1."""
     name = genome.replace("_genomic.fna.gz", "").replace(".fna.gz", "").replace(".fasta", "")
@@ -673,6 +697,8 @@ class Pangenome(Dataset):
         flank: int = 8000,
         max_gap: int = 20000,
         min_bin_fraction: float = 0.5,
+        max_without_bin: float = 1 / 3,
+        min_flank_fraction: float = 0.5,
         width: float = 9.0,
         font_size: float = 8.0,
         remove_gene_id: bool = True,
@@ -692,6 +718,18 @@ class Pangenome(Dataset):
         assembly also present as RefSeq dropped. Rows are ordered by
         clustering on the genes they carry. With a ``file_prefix`` the genes
         of every row are also written as CSV.
+
+        Below them, for context, come genomes that have the bin's
+        neighborhood but not the bin, up to ``max_without_bin`` of all the
+        rows shown. The neighborhood is the genes in the window outside the
+        bin that at least half of the carrying rows share. A genome qualifies
+        if it carries fewer than ``min_bin_fraction`` of the bin's genes and
+        one of its contigs carries neighbors from both sides of the bin and
+        at least ``min_flank_fraction`` of all of them; those whose genes
+        overlap most with the carrying rows', bin genes aside, come first.
+        Each side of such a contig is placed against the carrying rows'
+        neighbors separately, since the bin's length is missing between
+        them, and the row is drawn broken where the bin would sit.
 
         A bin's genes need not sit together: the window covers the largest
         run of them with no gap over ``max_gap`` bp, and the footnote says how
@@ -768,6 +806,12 @@ class Pangenome(Dataset):
         ).T.fillna(0).sort_index()
         by_genome = {row["genome"]: row for row in chosen}
         ordered = [by_genome[genome] for genome in order_rows(presence)]
+        # The most that keeps them within max_without_bin of all the rows; the
+        # small allowance stops 10 * (1/3) / (2/3) rounding down to 4
+        n_without = int(len(chosen) * max_without_bin / (1 - max_without_bin) + 1e-9)
+        ordered += self._rows_without_bin(
+            bin, chosen, window, (bin_lo, bin_hi), n_without, min_bin_fraction, min_flank_fraction,
+        )
         for row in ordered:
             row["genome_label"] = (genome_names or {}).get(row["genome"]) or _short_genome_name(row["genome"])
 
@@ -782,10 +826,132 @@ class Pangenome(Dataset):
         save_image(fig, file_prefix)
         if file_prefix is not None:
             pd.concat([
-                row["genes"].assign(genome=row["genome"], contig=row["contig"], name=lambda d: d["gene"].map(labels))
+                row["genes"].assign(
+                    genome=row["genome"], contig=row["contig"], carries_bin=not row.get("without_bin", False),
+                    name=lambda d: d["gene"].map(labels),
+                )
                 for row in ordered
             ]).to_csv(file_prefix + ".csv", index=False)
         return fig
+
+    def _rows_without_bin(
+        self,
+        bin: str,
+        carrying_rows: List[dict],
+        window: tuple,
+        bin_span: tuple,
+        n_rows: int,
+        min_bin_fraction: float,
+        min_flank_fraction: float,
+    ) -> List[dict]:
+        """
+        Up to ``n_rows`` context-map rows for genomes that have the bin's
+        neighborhood but not the bin, placed in the carrying rows' space, as
+        described in :meth:`bin_context_map`.
+        """
+        if n_rows < 1:
+            return []
+        bin_lo, bin_hi = bin_span
+        around = pd.concat([row["genes"].loc[~row["genes"]["in_bin"]].assign(genome=row["genome"]) for row in carrying_rows])
+        reference = around.groupby("gene").agg(
+            start=("start", "median"), stop=("stop", "median"), n=("genome", "nunique"),
+        )
+        reference = reference.loc[reference["n"] >= len(carrying_rows) / 2]
+        middle = (reference["start"] + reference["stop"]) / 2
+        left, right = set(reference.index[middle < bin_lo]), set(reference.index[middle > bin_hi])
+        if not left or not right:
+            return []
+        neighbors = left | right
+
+        aln = self.align_genomes
+        n_bin_genes = int(self.bin_size[bin])
+        bin_per_genome = aln.loc[aln["bin"] == bin].groupby("genome")["sseqid"].nunique()
+        carriers = set(bin_per_genome.loc[bin_per_genome >= min_bin_fraction * n_bin_genes].index)
+        candidates = aln.loc[aln["sseqid"].isin(neighbors) & ~aln["genome"].isin(carriers)]
+        duplicates = genbank_duplicates(candidates["genome"].unique())
+        candidates = candidates.loc[~candidates["genome"].isin(duplicates)]
+        found = candidates.groupby(["genome", "qseqid"])["sseqid"].apply(set)
+        found = found.loc[[
+            bool(genes & left) and bool(genes & right) and len(genes) >= min_flank_fraction * len(neighbors)
+            for genes in found
+        ]]
+        if found.empty:
+            return []
+
+        carried_sets = [set(row["genes"].loc[~row["genes"]["in_bin"], "gene"]) for row in carrying_rows]
+        on_contigs = aln.set_index(["genome", "qseqid"]).sort_index()
+        placed = []
+        for (genome, contig), genes in found.items():
+            row = self._place_without_bin(
+                on_contigs.loc[(genome, contig)].drop_duplicates("sseqid"), reference, left, right, window, bin,
+            )
+            if row is None:
+                continue
+            others = set(row["genes"].loc[~row["genes"]["in_bin"], "gene"])
+            placed.append(dict(row, genome=genome, contig=contig, without_bin=True,
+                               overlap=_mean_jaccard(others, carried_sets)))
+        placed.sort(key=lambda row: (-row["overlap"], row["genome"], row["contig"]))
+        chosen, seen = [], set()
+        for row in placed:
+            if row["genome"] not in seen:
+                chosen.append(row); seen.add(row["genome"])
+            if len(chosen) == n_rows:
+                break
+        return chosen
+
+    @staticmethod
+    def _place_without_bin(
+        on_contig: pd.DataFrame, reference: pd.DataFrame, left: set, right: set, window: tuple, bin: str,
+    ) -> dict | None:
+        """
+        One contig without the bin, placed in the shared space: each side
+        fitted to the reference positions of that side's neighbors, split
+        where the bin would sit. ``None`` when the two sides disagree on
+        orientation or overlap, as for a rearranged neighborhood.
+        """
+        positions = on_contig.set_index("sseqid")[["qstart", "qend"]]
+        left_sign, left_offset = _fit_to_reference(reference.loc[sorted(left)], positions)
+        right_sign, right_offset = _fit_to_reference(reference.loc[sorted(right)], positions)
+        if left_sign != right_sign:
+            return None
+        sign = left_sign
+        # The junction: halfway between the innermost neighbor on each side,
+        # in the contig's own coordinates
+        middle = (positions["qstart"] + positions["qend"]) / 2
+        inner_left = middle.loc[middle.index.intersection(sorted(left))]
+        inner_right = middle.loc[middle.index.intersection(sorted(right))]
+        inner_left = inner_left.max() if sign == 1 else inner_left.min()
+        inner_right = inner_right.min() if sign == 1 else inner_right.max()
+        if sign * (inner_right - inner_left) <= 0:
+            return None
+        junction = (inner_left + inner_right) / 2
+
+        def place(x, on_left):
+            return sign * x + (left_offset if on_left else right_offset)
+
+        on_left = (sign * (middle - junction) < 0).values
+        genes = pd.DataFrame({
+            "gene": positions.index.values,
+            "start": [place(x, s) for x, s in zip(positions["qstart"], on_left)],
+            "stop": [place(x, s) for x, s in zip(positions["qend"], on_left)],
+            "bin": on_contig["bin"].values,
+        })
+        genes = genes.loc[(genes[["start", "stop"]].max(axis=1) > window[0]) & (genes[["start", "stop"]].min(axis=1) < window[1])]
+        length = int(on_contig["qlen"].iloc[0])
+        ends = (1, length) if sign == 1 else (length, 1)
+        left_end, right_end = place(ends[0], True), place(ends[1], False)
+        segments = [
+            (max(left_end, window[0]), min(place(junction, True), window[1])),
+            (max(place(junction, False), window[0]), min(right_end, window[1])),
+        ]
+        segments = [(lo, hi) for lo, hi in segments if hi > lo]
+        if not segments or place(junction, True) > place(junction, False):
+            return None
+        return {
+            "genes": genes.assign(in_bin=genes["bin"] == bin).sort_values("start"),
+            "extent": (segments[0][0], segments[-1][1]),
+            "segments": segments,
+        }
 
     def _get_gene_coords(self, bin: str) -> pd.DataFrame:
         """
