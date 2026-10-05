@@ -47,6 +47,13 @@ MEMBERSHIP_METRICS = {
 }
 
 
+#: A contig's bin genes stay in one collinear piece while each lands within
+#: this of where the previous one put the rest: the larger of a fixed
+#: allowance for small indels and a share of the bin's span
+PIECE_TOLERANCE_BP = 2000
+PIECE_TOLERANCE_FRACTION = 0.05
+
+
 def _largest_cluster(genes: pd.DataFrame, max_gap: int) -> pd.DataFrame:
     """The longest run of genes, by count, in which no two neighbors are more than ``max_gap`` apart."""
     ordered = genes.sort_values("start")
@@ -74,6 +81,99 @@ def _fit_to_reference(reference: pd.DataFrame, contig: pd.DataFrame):
         if best is None or fit[0] < best[0]:
             best = fit
     return best[1], best[2]
+
+
+def _collinear_pieces(anchors: pd.DataFrame, consensus: pd.DataFrame, tolerance: float, min_genes: int = 3) -> tuple:
+    """
+    A contig's bin genes split into runs that each sit in the consensus order,
+    for a contig that carries the bin rearranged -- a circular permutation
+    of a prophage, say. Returns (sign, pieces): the contig's orientation
+    against the consensus, and per piece in contig order its ``offset`` (a
+    contig coordinate ``x`` lands at ``sign * x + offset``) and the contig
+    interval ``lo``..``hi`` its genes span.
+
+    Walking the genes in contig order, a gene joins the current piece while
+    its offset stays within ``tolerance`` of the previous gene's; runs of
+    fewer than ``min_genes`` are folded into the piece before them, so a
+    stray homolog does not make a piece of its own. The orientation giving
+    the fewest pieces wins.
+    """
+    shared = anchors[["qstart", "qend"]].join(consensus[["start", "stop"]], how="inner")
+    shared = shared.assign(at=(shared["qstart"] + shared["qend"]) / 2).sort_values(["at", "qstart"])
+    target = ((shared["start"] + shared["stop"]) / 2).values
+    at = shared["at"].values
+    best = None
+    for sign in (1, -1):
+        offsets = target - sign * at
+        runs = [[0]]
+        for i in range(1, len(offsets)):
+            if abs(offsets[i] - offsets[runs[-1][-1]]) <= tolerance:
+                runs[-1].append(i)
+            else:
+                runs.append([i])
+        merged = []
+        for run in runs:
+            if merged and len(run) < min_genes:
+                merged[-1].extend(run)
+            else:
+                merged.append(list(run))
+        if len(merged) > 1 and len(merged[0]) < min_genes:
+            merged[1] = merged[0] + merged[1]
+            merged = merged[1:]
+        pieces = [
+            dict(offset=float(np.median(offsets[run])), lo=float(at[run].min()), hi=float(at[run].max()))
+            for run in merged
+        ]
+        if best is None or len(pieces) < len(best[1]):
+            best = (sign, pieces)
+    return best
+
+
+def _in_consensus_order(sign: int, pieces: List[dict]) -> bool:
+    """
+    Whether a contig's pieces run in the consensus order, so that it differs
+    from the consensus only by an insertion or deletion between them and
+    can be placed in one piece like any other. Pieces that run out of order
+    are a rearrangement.
+    """
+    ordered = sorted(pieces, key=lambda piece: piece["lo"])
+    centers = [sign * (piece["lo"] + piece["hi"]) / 2 + piece["offset"] for piece in ordered]
+    # In contig order, a collinear contig's pieces climb the consensus if it
+    # runs the same way and descend if it is reversed; one piece is trivially in order
+    return bool(np.all(sign * np.diff(centers) > 0))
+
+
+def _place_in_pieces(on_contig: pd.DataFrame, pieces: List[dict]) -> tuple:
+    """
+    Every gene of a rearranged contig placed by the piece it falls in, as in
+    :func:`_collinear_pieces`. Returns the genes, the stretch each piece
+    covers, and the links between consecutive pieces in contig order (from
+    the end of one to the start of the next), which the map draws as arcs.
+    Genes beyond the outermost bin genes are left out: past a rearranged
+    end the contig no longer follows the consensus at all.
+    """
+    pieces = sorted(pieces, key=lambda piece: piece["lo"])
+    bounds = [pieces[0]["lo"]] + [(a["hi"] + b["lo"]) / 2 for a, b in zip(pieces, pieces[1:])] + [pieces[-1]["hi"]]
+    at = ((on_contig["qstart"] + on_contig["qend"]) / 2).values
+    index = np.searchsorted(bounds, at, side="right") - 1
+    inside = (at >= bounds[0]) & (at <= bounds[-1])
+    index = np.clip(index, 0, len(pieces) - 1)
+
+    def place(x, piece):
+        return piece["sign"] * x + piece["offset"]
+
+    kept = on_contig.loc[inside]
+    owners = [pieces[i] for i in index[inside]]
+    genes = pd.DataFrame({
+        "gene": kept["sseqid"].values,
+        "start": [place(x, piece) for x, piece in zip(kept["qstart"], owners)],
+        "stop": [place(x, piece) for x, piece in zip(kept["qend"], owners)],
+        "bin": kept["bin"].values,
+    })
+    segments = [tuple(sorted(place(x, piece) for x in (lo, hi)))
+                for piece, lo, hi in zip(pieces, bounds[:-1], bounds[1:])]
+    links = [(place(a["hi"], a), place(b["lo"], b)) for a, b in zip(pieces, pieces[1:])]
+    return genes, segments, links
 
 
 def _mean_jaccard(genes: set, others: List[set]) -> float:
@@ -719,6 +819,12 @@ class Pangenome(Dataset):
         clustering on the genes they carry. With a ``file_prefix`` the genes
         of every row are also written as CSV.
 
+        A contig whose bin genes sit in a different order from the others --
+        a prophage integrated at another point in its own sequence, so that
+        its two halves are swapped -- is split into the pieces that each
+        follow the consensus. Each piece is placed on its own, and an arc
+        joins consecutive pieces in the contig's actual order.
+
         Below them, for context, come genomes that have the bin's
         neighborhood but not the bin, up to ``max_without_bin`` of all the
         rows shown. The neighborhood is the genes in the window outside the
@@ -749,6 +855,7 @@ class Pangenome(Dataset):
 
         placed = Coords(in_bin.set_index(["genome", "qseqid"]).loc[carrying.index].reset_index())
         bin_coords = placed.to_df()
+        consensus = bin_coords.set_index("gene")
         clustered = _largest_cluster(bin_coords, max_gap)
         n_elsewhere = len(bin_coords) - len(clustered)
         bin_coords = clustered
@@ -766,18 +873,31 @@ class Pangenome(Dataset):
         # Place each carrying contig from its bin genes alone, which is enough
         # to know how much of the window it spans; the genomes whose contigs
         # span most of it are kept, one contig each
+        # A contig whose bin genes break into pieces in a different order from
+        # the consensus is kept and drawn piecewise, rather than forced onto
+        # one line where none of it would line up
+        tolerance = max(PIECE_TOLERANCE_BP, PIECE_TOLERANCE_FRACTION * (bin_hi - bin_lo))
         candidates = []
         for (genome, contig), n_carried in carrying.items():
             anchors = in_bin.loc[(in_bin["genome"] == genome) & (in_bin["qseqid"] == contig)].set_index("sseqid")
-            transform = placed.fit(anchors["qstart"].to_dict(), anchors["qend"].to_dict())
-            ends = sorted(transform(x) for x in (1, int(anchors["qlen"].iloc[0])))
-            extent = (max(ends[0], window[0]), min(ends[1], window[1]))
+            sign, pieces = _collinear_pieces(anchors, consensus, tolerance)
+            if _in_consensus_order(sign, pieces):
+                transform = placed.fit(anchors["qstart"].to_dict(), anchors["qend"].to_dict())
+                ends = sorted(transform(x) for x in (1, int(anchors["qlen"].iloc[0])))
+                extent = (max(ends[0], window[0]), min(ends[1], window[1]))
+                pieces = None
+            else:
+                for piece in pieces:
+                    piece["sign"] = sign
+                spans = [sorted(sign * x + piece["offset"] for x in (piece["lo"], piece["hi"])) for piece in pieces]
+                extent = (max(min(lo for lo, _ in spans), window[0]), min(max(hi for _, hi in spans), window[1]))
+                transform = None
             if extent[1] <= extent[0]:
                 continue
             candidates.append({
                 "genome": genome, "contig": contig, "n_carried": int(n_carried),
                 "coverage": (extent[1] - extent[0]) / (window[1] - window[0]),
-                "extent": extent, "transform": transform,
+                "extent": extent, "transform": transform, "pieces": pieces,
             })
         candidates.sort(key=lambda row: (-row["coverage"], -row["n_carried"], row["genome"]))
         chosen, seen = [], set()
@@ -791,13 +911,17 @@ class Pangenome(Dataset):
         on_contigs = aln.set_index(["genome", "qseqid"]).sort_index()
         for row in chosen:
             on_contig = on_contigs.loc[(row["genome"], row["contig"])].drop_duplicates("sseqid")
-            transform = row.pop("transform")
-            genes = pd.DataFrame({
-                "gene": on_contig["sseqid"].values,
-                "start": on_contig["qstart"].map(transform).values,
-                "stop": on_contig["qend"].map(transform).values,
-                "bin": on_contig["bin"].values,
-            })
+            transform, pieces = row.pop("transform"), row.pop("pieces")
+            if pieces is None:
+                genes = pd.DataFrame({
+                    "gene": on_contig["sseqid"].values,
+                    "start": on_contig["qstart"].map(transform).values,
+                    "stop": on_contig["qend"].map(transform).values,
+                    "bin": on_contig["bin"].values,
+                })
+            else:
+                genes, row["segments"], row["links"] = _place_in_pieces(on_contig, pieces)
+                row["rearranged"] = True
             genes = genes.loc[(genes[["start", "stop"]].max(axis=1) > window[0]) & (genes[["start", "stop"]].min(axis=1) < window[1])]
             row["genes"] = genes.assign(in_bin=genes["bin"] == bin).sort_values("start")
 
@@ -828,6 +952,7 @@ class Pangenome(Dataset):
             pd.concat([
                 row["genes"].assign(
                     genome=row["genome"], contig=row["contig"], carries_bin=not row.get("without_bin", False),
+                    rearranged=row.get("rearranged", False),
                     name=lambda d: d["gene"].map(labels),
                 )
                 for row in ordered

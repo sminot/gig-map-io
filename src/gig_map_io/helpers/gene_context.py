@@ -20,7 +20,8 @@ from typing import Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.patches import Polygon
+from matplotlib.path import Path
+from matplotlib.patches import PathPatch, Polygon
 
 from .clustering import linkage_order
 
@@ -31,6 +32,9 @@ UNIQUE_COLOR = "#d9d9d9"
 
 #: The key to the colors, printed beneath every map
 KEY = "Same color: same gene.  Outlined: in the bin.  Gray: found in one of these genomes only."
+
+#: What an arc over a row means, printed when there are any
+LINK_KEY = "Arc: one contig, its pieces joined in the order they really run, which differs from the other rows."
 
 #: What the rows below the dashed line are, printed when there are any
 WITHOUT_BIN_KEY = "Below the dashed line: genomes with the bin's neighbors but not the bin, broken where it would sit."
@@ -118,6 +122,19 @@ def gene_arrow(start: float, stop: float, y: float, height: float, face, edge, e
     return Polygon(points, closed=True, facecolor=face, edgecolor=edge, linewidth=edge_width, zorder=3)
 
 
+def link_arc(x_from: float, x_to: float, y: float) -> PathPatch:
+    """
+    A curve over a row from one stretch of contig to the next, rising to
+    the gap between rows, for a contig drawn in pieces.
+    """
+    base, peak = y + ARROW_HEIGHT / 2, y + 0.5
+    path = Path(
+        [(x_from, base), (x_from, peak), (x_to, peak), (x_to, base)],
+        [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4],
+    )
+    return PathPatch(path, facecolor="none", edgecolor="#333333", linewidth=1.0, zorder=3)
+
+
 def order_rows(presence: pd.DataFrame) -> list:
     """
     Rows ordered by hierarchical clustering on which genes they carry, so
@@ -147,8 +164,10 @@ def plot_gene_context(
         of the contig inside the window, as (lo, hi)), and ``genes``, a
         DataFrame with ``gene``, ``start``, ``stop``, ``in_bin``. A row may
         carry ``segments``, the stretches of contig to draw where it is not
-        continuous, and ``without_bin`` for a genome shown for context that
-        lacks the bin; those come last, below a dashed line.
+        continuous, ``links`` joining those stretches in the contig's own
+        order (drawn as arcs above the row), and ``without_bin`` for a genome
+        shown for context that lacks the bin; those come last, below a dashed
+        line.
     window:
         (lo, hi) of the region drawn, in bp.
     note:
@@ -166,6 +185,8 @@ def plot_gene_context(
     key = KEY
     if any(row.get("without_bin") for row in rows):
         key = f"{WITHOUT_BIN_KEY}\n{key}"
+    if any(row.get("links") for row in rows):
+        key = f"{LINK_KEY}\n{key}"
     footnote = key if note is None else f"{note}\n{key}"
     bottom_in = 0.4 + FOOTNOTE_LINE_IN * (footnote.count("\n") + 1)
     fig_height = TOP_PAD_IN + label_height + rows_height + 0.55 + bottom_in
@@ -201,6 +222,8 @@ def plot_gene_context(
             main.axhline(y + 0.5, color="#8a8f98", linewidth=0.8, linestyle=(0, (4, 3)), zorder=0)
         for segment in row.get("segments", [row["extent"]]):
             main.plot(segment, [y, y], color="#8a8f98", linewidth=1.0, zorder=1, solid_capstyle="butt")
+        for x_from, x_to in row.get("links", []):
+            main.add_patch(link_arc(x_from, x_to, y))
         for _, gene in row["genes"].iterrows():
             face = colors.get(gene["gene"], UNIQUE_COLOR)
             if gene["in_bin"]:
