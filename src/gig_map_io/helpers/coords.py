@@ -163,9 +163,11 @@ class Coords:
         reverse: bool,
         offset=0
     ):
+        # The same placement calc_offset and fit measure: flip, then shift
+        sign = -1 if reverse else 1
         for gene in start_coords:
-            self.start_coords[gene].append((start_coords[gene] + offset) * (-1 if reverse else 1))
-            self.stop_coords[gene].append((stop_coords[gene] + offset) * (-1 if reverse else 1))
+            self.start_coords[gene].append(sign * start_coords[gene] + offset)
+            self.stop_coords[gene].append(sign * stop_coords[gene] + offset)
             self.seen.add(gene)
 
     def calc_offset(self, start_coords: Dict[str, int], stop_coords: Dict[str, int], reverse: bool):

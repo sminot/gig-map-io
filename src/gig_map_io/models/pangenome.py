@@ -96,7 +96,8 @@ def _collinear_pieces(anchors: pd.DataFrame, consensus: pd.DataFrame, tolerance:
     its offset stays within ``tolerance`` of the previous gene's; runs of
     fewer than ``min_genes`` are folded into the piece before them, so a
     stray homolog does not make a piece of its own. The orientation giving
-    the fewest pieces wins.
+    the fewest pieces wins, and between equals the one with fewer runs before
+    folding.
     """
     shared = anchors[["qstart", "qend"]].join(consensus[["start", "stop"]], how="inner")
     shared = shared.assign(at=(shared["qstart"] + shared["qend"]) / 2).sort_values(["at", "qstart"])
@@ -124,9 +125,12 @@ def _collinear_pieces(anchors: pd.DataFrame, consensus: pd.DataFrame, tolerance:
             dict(offset=float(np.median(offsets[run])), lo=float(at[run].min()), hi=float(at[run].max()))
             for run in merged
         ]
-        if best is None or len(pieces) < len(best[1]):
-            best = (sign, pieces)
-    return best
+        # Folding can leave both orientations a single piece; the right one is
+        # the one whose genes already ran together before any folding
+        score = (len(pieces), len(runs))
+        if best is None or score < best[0]:
+            best = (score, sign, pieces)
+    return best[1], best[2]
 
 
 def _in_consensus_order(sign: int, pieces: List[dict]) -> bool:
@@ -876,10 +880,17 @@ class Pangenome(Dataset):
         # A contig whose bin genes break into pieces in a different order from
         # the consensus is kept and drawn piecewise, rather than forced onto
         # one line where none of it would line up
+        # Only the bin genes in the window anchor a contig: one that lies
+        # elsewhere sits megabases from the rest in the consensus, and as an
+        # outlier it decides which orientation fits best
         tolerance = max(PIECE_TOLERANCE_BP, PIECE_TOLERANCE_FRACTION * (bin_hi - bin_lo))
         candidates = []
         for (genome, contig), n_carried in carrying.items():
-            anchors = in_bin.loc[(in_bin["genome"] == genome) & (in_bin["qseqid"] == contig)].set_index("sseqid")
+            anchors = in_bin.loc[
+                (in_bin["genome"] == genome) & (in_bin["qseqid"] == contig) & in_bin["sseqid"].isin(bin_coords["gene"])
+            ].set_index("sseqid")
+            if anchors.empty:
+                continue
             sign, pieces = _collinear_pieces(anchors, consensus, tolerance)
             if _in_consensus_order(sign, pieces):
                 transform = placed.fit(anchors["qstart"].to_dict(), anchors["qend"].to_dict())
