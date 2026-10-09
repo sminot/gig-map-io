@@ -17,54 +17,195 @@ from ..helpers.observed_expected import expected_counts, plot_observed_expected
 from .sample_group import _key as _label_key
 from ..helpers.make_lines import make_lines
 from ..helpers.save_image import save_image
+from ..helpers.significance import add_significance
 from ..helpers.style import (
-    DENSE_MARKER_OPACITY, ESTIMATE_THRESH, FDR_THRESH, PRIMARY, TEMPLATE, THRESHOLD_LINE,
-    ZERO_LINE, group_colors, legend_above,
+    DENSE_MARKER_OPACITY, FDR_THRESH, MIN_ABS_LOG2_FOLD_CHANGE, MIN_MEAN_RPKM, NEUTRAL, PRIMARY,
+    TEMPLATE, THRESHOLD_LINE, ZERO_LINE, group_colors, legend_above,
 )
+
+LOG2_FOLD_CHANGE_LABEL = "log<sub>2</sub> fold change, cases / controls"
 
 #: How the association columns are labeled wherever they are plotted
 ASSOCIATION_LABELS = dict(
-    Estimate_clipped="Effect size",
-    Estimate="Effect size",
+    log2_fold_change_clipped=LOG2_FOLD_CHANGE_LABEL,
+    log2_fold_change=LOG2_FOLD_CHANGE_LABEL,
+    Estimate="Estimate (fold change - 1)",
     neg_log10_qvalue="-log10(q-value)",
     neg_log10_pvalue="-log10(p-value)",
     signed_log10_qvalue="Signed -log10(q-value)",
     signed_log10_pvalue="Signed -log10(p-value)",
     feature="Pangenome bin",
+    mean_abund_clipped="Mean abundance (RPKM)",
     mean_abund="Mean abundance (RPKM)",
     pangenome="Organism",
     qvalue="q-value",
     pvalue="p-value",
 )
 
+#: The columns every association plot shows on hover
+ASSOCIATION_HOVER = ["mean_abund", "log2_fold_change", "Estimate", "pvalue", "qvalue"]
+
+#: Where a bin with a mean RPKM below this is drawn on a log axis, which
+#: cannot show zero
+MIN_PLOTTED_RPKM = 0.01
+
+#: The legend entry for the bins drawn at an axis limit
+BEYOND_AXIS = "Beyond the axis"
+
+
+def clip_log2_fold_change(association: pd.DataFrame, max_abs_log2_fold_change: float) -> pd.DataFrame:
+    """
+    ``log2_fold_change_clipped``: the log2 fold change held within the axis,
+    so that a few extreme bins -- including those absent from one group,
+    which are infinite -- do not crush the rest.
+    """
+    return association.assign(
+        log2_fold_change_clipped=association["log2_fold_change"].clip(-max_abs_log2_fold_change, max_abs_log2_fold_change)
+    )
+
+
+#: The per-point properties of a scatter trace, which travel with a point
+#: when a trace is split
+_POINT_PROPERTIES = [("x",), ("y",), ("customdata",), ("hovertext",), ("text",), ("ids",),
+                     ("marker", "size"), ("marker", "color")]
+
+#: ``meta`` of the traces holding the points drawn at an axis limit
+_BEYOND_META = "beyond"
+
+
+def _take_points(trace, keep: np.ndarray) -> None:
+    """Keep only the points of ``trace`` where ``keep`` is true, in place."""
+    for path in _POINT_PROPERTIES:
+        owner = trace if len(path) == 1 else trace[path[0]]
+        value = owner[path[-1]]
+        if value is not None and not isinstance(value, (str, int, float)):
+            owner[path[-1]] = np.asarray(value, dtype=object)[keep]
+
+
+def mark_beyond_axis(fig: go.Figure, limit: float, axis: str) -> None:
+    """
+    Draw every point sitting at ``±limit`` on ``axis`` ("x" or "y") as a
+    triangle pointing off the axis, and add a legend entry saying so where
+    there are any.
+
+    The points move to a trace of their own beside the one they came from,
+    in its legend group but not in the legend, since a legend icon is drawn
+    from a trace's first point. A point already moved for the other axis
+    keeps its triangle.
+    """
+    low, high = ("triangle-left", "triangle-right") if axis == "x" else ("triangle-down", "triangle-up")
+    beyond_traces = []
+    for trace in fig.data:
+        if trace.name == BEYOND_AXIS or trace.meta == _BEYOND_META:
+            continue
+        values = np.asarray(trace[axis], dtype=float)
+        beyond = np.abs(values) >= limit
+        if not beyond.any():
+            continue
+        part = type(trace)(trace)
+        _take_points(part, beyond)
+        _take_points(trace, ~beyond)
+        part.update(
+            showlegend=False,
+            legendgroup=trace.legendgroup or trace.name,
+            meta=_BEYOND_META,
+            marker_symbol=np.where(values[beyond] > 0, high, low),
+        )
+        trace.legendgroup = trace.legendgroup or trace.name
+        beyond_traces.append(part)
+    fig.add_traces(beyond_traces)
+    if beyond_traces and BEYOND_AXIS not in [trace.name for trace in fig.data]:
+        fig.add_trace(
+            go.Scatter(x=[None], y=[None], mode="markers", name=BEYOND_AXIS, legendrank=1002,
+                       marker=dict(symbol=high, color=NEUTRAL, size=8)),
+        )
+
+
+def add_low_abundance(fig: go.Figure, low: pd.DataFrame, x: str, y: str, hover_name: str) -> None:
+    """Draw the bins below the abundance filter in grey, beneath the rest and last in the legend."""
+    fig.add_trace(
+        go.Scattergl(
+            x=low[x], y=low[y], mode="markers", name="Low abundance", legendrank=1001,
+            marker=dict(color=NEUTRAL, opacity=0.35, size=5, line_width=0),
+            hovertext=low[hover_name], hoverinfo="text",
+        ),
+    )
+    fig.data = (fig.data[-1],) + fig.data[:-1]
+
 
 def volcano_figure(
     association: pd.DataFrame,
-    estimate_thresh: float,
     fdr_thresh: float,
-    max_abs_estimate: float,
+    max_abs_log2_fold_change: float,
+    show_low_abundance: bool,
+    fold_change_label: str = LOG2_FOLD_CHANGE_LABEL,
     **scatter_kwargs,
 ) -> go.Figure:
     """
-    Effect size against -log10 q-value for every bin in ``association``,
-    with the effect size clipped to ``max_abs_estimate`` so that a few
-    extreme bins do not crush the rest, and the significance thresholds
-    drawn. ``scatter_kwargs`` go to ``px.scatter``.
+    log2 fold change against significance, one point per bin, drawn one of
+    two ways.
+
+    By default, the bins that pass the abundance filter against their
+    q-value, with the thresholds that call a bin drawn. With
+    ``show_low_abundance``, every bin against its p-value -- the only
+    measure the bins below the filter have -- with those bins in grey and
+    no thresholds, since calls are made on q-values among the bins kept.
+    ``scatter_kwargs`` go to ``px.scatter``, and must name ``hover_name``.
     """
-    df = association.assign(
-        Estimate_clipped=association["Estimate"].clip(lower=-max_abs_estimate, upper=max_abs_estimate)
-    )
+    df = clip_log2_fold_change(association, max_abs_log2_fold_change)
+    y = "neg_log10_pvalue" if show_low_abundance else "neg_log10_qvalue"
     fig = px.scatter(
-        data_frame=df,
-        x="Estimate_clipped",
-        y="neg_log10_qvalue",
+        data_frame=df.loc[~df["low_abundance"]],
+        x="log2_fold_change_clipped",
+        y=y,
         template=TEMPLATE,
-        labels=ASSOCIATION_LABELS,
+        labels={**ASSOCIATION_LABELS, "log2_fold_change_clipped": fold_change_label},
         **scatter_kwargs,
     )
+    if show_low_abundance:
+        add_low_abundance(fig, df.loc[df["low_abundance"]], "log2_fold_change_clipped", y, scatter_kwargs["hover_name"])
+    mark_beyond_axis(fig, max_abs_log2_fold_change, "x")
     make_lines(0, fig, **ZERO_LINE)
-    make_lines(estimate_thresh, fig, hline=False, **THRESHOLD_LINE)
-    make_lines(-np.log10(fdr_thresh), fig, vline=False, neg=False, **THRESHOLD_LINE)
+    if not show_low_abundance:
+        make_lines(MIN_ABS_LOG2_FOLD_CHANGE, fig, hline=False, **THRESHOLD_LINE)
+        make_lines(-np.log10(fdr_thresh), fig, vline=False, neg=False, **THRESHOLD_LINE)
+    return fig
+
+
+def ma_figure(
+    association: pd.DataFrame,
+    max_abs_log2_fold_change: float,
+    fold_change_label: str = LOG2_FOLD_CHANGE_LABEL,
+    **scatter_kwargs,
+) -> go.Figure:
+    """
+    log2 fold change against mean abundance, one point per bin: the bins
+    below the abundance filter in grey, the filter as a vertical line, and
+    the fold-change thresholds as horizontal ones. ``scatter_kwargs`` go to
+    ``px.scatter``, and must name ``hover_name``.
+    """
+    df = clip_log2_fold_change(association, max_abs_log2_fold_change).assign(
+        mean_abund_clipped=association["mean_abund"].clip(lower=MIN_PLOTTED_RPKM)
+    )
+    fig = px.scatter(
+        data_frame=df.loc[~df["low_abundance"]],
+        x="mean_abund_clipped",
+        y="log2_fold_change_clipped",
+        log_x=True,
+        template=TEMPLATE,
+        labels={**ASSOCIATION_LABELS, "log2_fold_change_clipped": fold_change_label},
+        **scatter_kwargs,
+    )
+    add_low_abundance(fig, df.loc[df["low_abundance"]], "mean_abund_clipped", "log2_fold_change_clipped", scatter_kwargs["hover_name"])
+    mark_beyond_axis(fig, max_abs_log2_fold_change, "y")
+    make_lines(0, fig, vline=False, neg=False, **ZERO_LINE)
+    make_lines(MIN_ABS_LOG2_FOLD_CHANGE, fig, vline=False, **THRESHOLD_LINE)
+    make_lines(MIN_MEAN_RPKM, fig, hline=False, neg=False, **THRESHOLD_LINE)
+    # An annotation on a log axis is placed in log10 units
+    fig.add_annotation(
+        x=np.log10(MIN_MEAN_RPKM), y=1, yref="paper", text=f"{MIN_MEAN_RPKM:g} RPKM", showarrow=False,
+        xanchor="left", yanchor="bottom", font=dict(color=THRESHOLD_LINE["line_color"]),
+    )
     return fig
 
 
@@ -90,14 +231,16 @@ class ContrastMetagenomes(Dataset):
     def association(self) -> pd.DataFrame:
         """
         Association results from association/association.csv, filtered to
-        the specified parameter, with each bin's mean abundance added.
+        the specified parameter, with each bin's mean abundance added and the
+        abundance filter, q-values and fold changes of
+        ``helpers.significance.add_significance``.
         """
         path = self.directory / "association" / "association.csv"
         df = pd.read_csv(path)
         if self.parameter not in df["parameter"].values:
             raise ValueError(f"parameter {self.parameter} not found in association.csv")
         df = df.loc[df["parameter"] == self.parameter].drop(columns=["parameter"])
-        return df.assign(mean_abund=df["feature"].map(self.mean_abund).fillna(0))
+        return add_significance(df.assign(mean_abund=df["feature"].map(self.mean_abund).fillna(0)))
 
     @cached_property
     def rpkm(self) -> pd.DataFrame:
@@ -162,42 +305,71 @@ class ContrastMetagenomes(Dataset):
 
     def volcano_plot(
         self,
-        estimate_thresh: float = ESTIMATE_THRESH,
         fdr_thresh: float = FDR_THRESH,
-        max_abs_estimate: float = 5.0,
+        max_abs_log2_fold_change: float = 4.0,
+        show_low_abundance: bool = False,
         label_bins: tuple = (),
+        fold_change_label: str = LOG2_FOLD_CHANGE_LABEL,
         width: int = 560,
         height: int = 450,
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
         """
-        Volcano plot from the association results, each bin sized by its mean
-        abundance. Each bin named in ``label_bins`` is pointed out with an
-        arrow and its name.
+        Volcano plot from the association results (see ``volcano_figure``
+        for its two versions), each bin sized by its mean abundance. Each bin
+        named in ``label_bins`` is pointed out with an arrow and its name.
+        ``fold_change_label`` names the two groups where they are not cases
+        and controls.
         """
         fig = volcano_figure(
-            self.association, estimate_thresh, fdr_thresh, max_abs_estimate,
-            hover_data=self.association.columns.values,
+            self.association, fdr_thresh, max_abs_log2_fold_change, show_low_abundance, fold_change_label,
+            hover_data=ASSOCIATION_HOVER,
             hover_name="feature",
             size="mean_abund",
             size_max=14,
             color_discrete_sequence=[PRIMARY],
+            opacity=DENSE_MARKER_OPACITY,
             width=width,
             height=height,
             **kwargs
         )
-        fig.update_traces(marker=dict(opacity=DENSE_MARKER_OPACITY, line_width=0))
+        fig.update_traces(marker_line_width=0)
+        y = "neg_log10_pvalue" if show_low_abundance else "neg_log10_qvalue"
         for bin in label_bins:
             point = self.association.loc[self.association["feature"] == bin]
             if point.empty:
                 raise ValueError(f"{bin} is not among the bins this contrast tested")
+            if point["low_abundance"].iloc[0] and not show_low_abundance:
+                raise ValueError(f"{bin} is below the abundance filter, so this version of the plot does not show it")
             fig.add_annotation(
-                x=float(point["Estimate"].clip(-max_abs_estimate, max_abs_estimate).iloc[0]),
-                y=float(point["neg_log10_qvalue"].iloc[0]),
+                x=float(point["log2_fold_change"].clip(-max_abs_log2_fold_change, max_abs_log2_fold_change).iloc[0]),
+                y=float(point[y].iloc[0]),
                 text=bin, showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.2,
                 arrowcolor="#333333", ax=45, ay=-25, font=dict(size=13),
             )
+        save_image(fig, file_prefix)
+        return fig
+
+    def ma_plot(
+        self,
+        max_abs_log2_fold_change: float = 4.0,
+        fold_change_label: str = LOG2_FOLD_CHANGE_LABEL,
+        width: int = 560,
+        height: int = 450,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """M-A plot from the association results (see ``ma_figure``)."""
+        fig = ma_figure(
+            self.association, max_abs_log2_fold_change, fold_change_label,
+            hover_data=ASSOCIATION_HOVER,
+            hover_name="feature",
+            color_discrete_sequence=[PRIMARY],
+            opacity=DENSE_MARKER_OPACITY,
+            width=width,
+            height=height,
+        )
+        fig.update_traces(marker_line_width=0)
         save_image(fig, file_prefix)
         return fig
 

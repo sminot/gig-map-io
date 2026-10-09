@@ -9,6 +9,7 @@ whether a group is the case-like or the control-like side of a contrast.
 
 from __future__ import annotations
 
+import math
 from typing import Dict, List, Sequence
 
 import matplotlib
@@ -63,10 +64,14 @@ SHORT_LEGEND = 6
 #: Height of one row of horizontal legend, in px
 LEGEND_ROW_PX = 40
 
-#: The thresholds that make a bin significant: the smallest effect size and
-#: the largest FDR-adjusted q-value.
-ESTIMATE_THRESH = 0.25
+#: The thresholds that call a bin associated: the smallest mean RPKM across a
+#: study's samples for the bin to be tested at all, the largest FDR-adjusted
+#: q-value, and the smallest fold change either way (1.25-fold up, or down
+#: to 0.8 of the control mean).
+MIN_MEAN_RPKM = 5.0
 FDR_THRESH = 0.2
+MIN_FOLD_CHANGE = 1.25
+MIN_ABS_LOG2_FOLD_CHANGE = math.log2(MIN_FOLD_CHANGE)
 
 # Matplotlib draws the gene and context maps in the same family the plotly
 # template names, so that the two kinds of figure set text alike: Helvetica,

@@ -25,7 +25,7 @@ from ..helpers.permanova import permanova
 from ..helpers.positivity import plot_feature_positivity, plot_positivity_heatmap
 from ..helpers.save_image import save_image
 from ..helpers.style import (
-    DENSE_MARKER_OPACITY, ESTIMATE_THRESH, FDR_THRESH, LARGE_QUALITATIVE, PRIMARY, TEMPLATE,
+    DENSE_MARKER_OPACITY, FDR_THRESH, LARGE_QUALITATIVE, PRIMARY, TEMPLATE,
     SHORT_LEGEND, THRESHOLD_LINE, TOP_LEGEND, group_colors, legend_above, organism_colors, organism_order,
 )
 from ..helpers.supervised import fit_classifier
@@ -133,19 +133,15 @@ class StudySet:
         return self.rpkm.reindex(columns=index)
 
 
-    def significant_bins(
-        self,
-        estimate_thresh: float = ESTIMATE_THRESH,
-        fdr_thresh: float = FDR_THRESH,
-    ) -> pd.DataFrame:
+    def significant_bins(self, fdr_thresh: float = FDR_THRESH) -> pd.DataFrame:
         """
-        Bins passing the significance thresholds in *every* study in the set.
+        Bins called higher or lower in cases in *every* study in the set.
 
         Association columns are suffixed with each study's name.
         """
         merged: pd.DataFrame | None = None
         for study in self.studies:
-            df = study.significant_bins(estimate_thresh, fdr_thresh).add_suffix(f"_{study.name}")
+            df = study.significant_bins(fdr_thresh).add_suffix(f"_{study.name}")
             merged = df if merged is None else merged.join(df, how="inner")
         return merged
 

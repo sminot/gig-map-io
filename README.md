@@ -92,11 +92,33 @@ from gig_map_io import Study
 
 study = Study.from_json("studies/gvhd_combined.json", datasets="/data/pangenomes")
 
-study.volcano_plot(max_abs_estimate=2.5, file_prefix="out/volcano")
-study.significant_bins(estimate_thresh=0.25, fdr_thresh=0.2, direction="negative")
+study.volcano_plot(file_prefix="out/volcano")                              # bins kept, by q-value
+study.volcano_plot(show_low_abundance=True, file_prefix="out/volcano_all")  # every bin, by p-value
+study.ma_plot(file_prefix="out/ma")
+study.significant_bins(fdr_thresh=0.2, direction="negative")
 study.describe_bins(bins, odds_by="cohort")
 study.bin_gene_map("Alistipes", "Bin 100", file_prefix="out/gene_map")
 ```
+
+How a bin is called is defined once, in `helpers/significance.py`, and every
+method that calls, counts or draws bins uses it:
+
+1. **Abundance filter.** A bin whose mean RPKM across the study's samples is
+   below `MIN_MEAN_RPKM` (5) is not tested. The filter ignores which samples
+   are cases, so the FDR correction over the remaining bins stays valid.
+2. **FDR.** Benjamini–Hochberg across the kept bins of every organism in the
+   study. Low-abundance bins have no q-value.
+3. **Direction** is the sign of `t value`. The association model is a linear
+   regression of abundance, and gig-map reports its coefficient divided by
+   the intercept (the fitted control mean) as `Estimate`. Where a fit puts
+   that mean below zero, the sign of `Estimate` is the opposite of the
+   association's, so it is never used for direction.
+4. **Fold change.** `log2_fold_change` is log2(1 + `Estimate`), fitted case
+   mean over fitted control mean. Where exactly one fitted mean is at or below
+   zero, it is ±infinity in the direction of the association.
+5. **Call.** Higher (`>`) or lower (`<`) in cases when the bin is kept, its
+   q-value is below `FDR_THRESH` (0.2), and its fold change is at least
+   `MIN_FOLD_CHANGE` (1.25) either way; otherwise `=`, unassociated.
 
 Comparisons take another study, and label themselves from the two studies'
 labels:
@@ -129,7 +151,7 @@ from gig_map_io import StudySet
 
 studies = StudySet.from_json("studies/gvhd_combined.json", "studies/ibd_combined.json")
 
-studies.significant_bins()                          # bins significant in every study
+studies.significant_bins()                          # bins called in every study
 studies.tsne_plot("disease", file_prefix="out/tsne")
 studies.permanova(file_prefix="out/permanova")
 studies.pangenome_clusters("Alistipes")             # Leiden community types

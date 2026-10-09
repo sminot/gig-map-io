@@ -13,7 +13,6 @@ import plotly.express as px
 import pandas as pd
 import numpy as np
 from scipy import stats
-from statsmodels.stats.multitest import multipletests
 
 from gig_map_io.helpers.clustering import linkage_order
 from gig_map_io.helpers.make_lines import make_lines
@@ -21,11 +20,15 @@ from gig_map_io.helpers.save_image import save_image
 from gig_map_io.helpers.format_pvalue import format_pvalue
 from gig_map_io.helpers.observed_expected import expected_counts, plot_observed_expected
 from gig_map_io.helpers.sidebar import add_category_sidebar
+from gig_map_io.helpers.significance import DIRECTIONS, add_significance, call_direction
 from gig_map_io.helpers.style import (
-    DENSE_MARKER_OPACITY, ESTIMATE_THRESH, FDR_THRESH, QUALITATIVE, TEMPLATE, THRESHOLD_LINE,
-    TOP_LEGEND, ZERO_LINE, group_colors, organism_colors, organism_order,
+    DENSE_MARKER_OPACITY, FDR_THRESH, MIN_ABS_LOG2_FOLD_CHANGE, QUALITATIVE, TEMPLATE,
+    THRESHOLD_LINE, TOP_LEGEND, ZERO_LINE, group_colors, organism_colors, organism_order,
 )
-from .contrast_metagenomes import ASSOCIATION_LABELS, ContrastMetagenomes, volcano_figure
+from .contrast_metagenomes import (
+    ASSOCIATION_HOVER, ASSOCIATION_LABELS, LOG2_FOLD_CHANGE_LABEL, ContrastMetagenomes,
+    _BEYOND_META, add_low_abundance, ma_figure, mark_beyond_axis, volcano_figure,
+)
 from .dataset_dict import DatasetDict
 from .sample_group import _key as _label_key
 
@@ -101,21 +104,16 @@ class ContrastMetagenomesSet(DatasetDict):
 
     @cached_property
     def association(self) -> pd.DataFrame:
-        """The association results of every contrast, with the q-values recomputed across all of them."""
+        """
+        The association results of every contrast, with the q-values
+        recomputed across all of them, among the bins that pass the
+        abundance filter.
+        """
         df = pd.concat([
             contrast.association.assign(pangenome=pangenome_name)
             for pangenome_name, contrast in self.contrast_metagenomes.items()
-        ])
-        df = df.dropna(subset=["pvalue"])
-        qvalue = multipletests(df["pvalue"], method="fdr_bh")[1]
-        df = df.assign(
-            qvalue=qvalue,
-            pvalue=df["pvalue"].clip(lower=df.loc[df["pvalue"] > 0, "pvalue"].min()),
-            neg_log10_qvalue=-np.log10(qvalue),
-            signed_log10_qvalue=lambda d: np.sign(d["Estimate"]) * -np.log10(qvalue),
-            signed_log10_pvalue=lambda d: np.sign(d["Estimate"]) * -np.log10(d["pvalue"]),
-        )
-        return df.sort_values(by=["pangenome", "pvalue"])
+        ], ignore_index=True)
+        return add_significance(df).sort_values(by=["pangenome", "pvalue", "feature"])
 
     def _organism_scatter(self, df: pd.DataFrame, x: str, y: str, marker: dict, **kwargs) -> go.Figure:
         """
@@ -137,30 +135,54 @@ class ContrastMetagenomesSet(DatasetDict):
         fig.update_traces(marker=dict(marker, line_width=0))
         return fig
 
+    def _organism_traces(self) -> dict:
+        """``px.scatter`` arguments that color bins by organism, as everywhere."""
+        return dict(
+            hover_name="hover_name",
+            color="pangenome",
+            color_discrete_map=organism_colors(self.pangenome_names),
+            category_orders={"pangenome": organism_order(self.pangenome_names)},
+            hover_data=ASSOCIATION_HOVER,
+            opacity=DENSE_MARKER_OPACITY,
+        )
+
     def volcano_plot(
         self,
-        estimate_thresh: float = ESTIMATE_THRESH,
         fdr_thresh: float = FDR_THRESH,
-        max_abs_estimate: float = 5.0,
+        max_abs_log2_fold_change: float = 4.0,
+        show_low_abundance: bool = False,
         width: int = 650,
         height: int = 450,
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
-        """Volcano plot from the association results, colored by organism."""
+        """
+        Volcano plot from the association results, colored by organism; see
+        ``volcano_figure`` for its two versions.
+        """
         df = self.association.assign(hover_name=lambda d: d["pangenome"] + "<br>" + d["feature"])
         fig = volcano_figure(
-            df, estimate_thresh, fdr_thresh, max_abs_estimate,
-            hover_name="hover_name",
-            color="pangenome",
-            color_discrete_map=organism_colors(self.pangenome_names),
-            category_orders={"pangenome": organism_order(self.pangenome_names)},
-            hover_data=["mean_abund", "Estimate", "signed_log10_qvalue", "signed_log10_pvalue", "pvalue", "qvalue"],
+            df, fdr_thresh, max_abs_log2_fold_change, show_low_abundance,
             width=width,
             height=height,
+            **self._organism_traces(),
             **kwargs
         )
-        fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, line_width=0))
+        fig.update_traces(marker=dict(size=6, line_width=0), selector=lambda t: t.name != "Low abundance")
+        save_image(fig, file_prefix)
+        return fig
+
+    def ma_plot(
+        self,
+        max_abs_log2_fold_change: float = 4.0,
+        width: int = 650,
+        height: int = 450,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """M-A plot from the association results, colored by organism (see ``ma_figure``)."""
+        df = self.association.assign(hover_name=lambda d: d["pangenome"] + "<br>" + d["feature"])
+        fig = ma_figure(df, max_abs_log2_fold_change, width=width, height=height, **self._organism_traces())
+        fig.update_traces(marker=dict(size=6, line_width=0), selector=lambda t: t.name != "Low abundance")
         save_image(fig, file_prefix)
         return fig
 
@@ -301,19 +323,28 @@ class ContrastMetagenomesSet(DatasetDict):
         save_image(fig, file_prefix)
         return fig
 
-    def compare_association(self, comparator: 'ContrastMetagenomesSet') -> pd.DataFrame:
-        """The association results of the two sets side by side, one row per bin tested in both."""
+    def compare_association(
+        self,
+        comparator: 'ContrastMetagenomesSet',
+        fdr: bool = True,
+        sig_thresh: float = FDR_THRESH,
+    ) -> pd.DataFrame:
+        """
+        The association results of the two sets side by side, one row per bin
+        tested in both, with each set's call in ``call_self`` and
+        ``call_comparator``.
+        """
         return (
             self.association
+            .assign(call=lambda d: call_direction(d, fdr=fdr, sig_thresh=sig_thresh))
             .merge(
-                comparator.association,
+                comparator.association.assign(call=lambda d: call_direction(d, fdr=fdr, sig_thresh=sig_thresh)),
                 on=["pangenome", "feature"],
                 suffixes=("_self", "_comparator")
             )
             .assign(
                 mean_abund=lambda x: x[["mean_abund_self", "mean_abund_comparator"]].mean(axis=1),
             )
-            .dropna(subset=["pvalue_self", "pvalue_comparator"])
         )
 
     def compare_sig_categories(
@@ -321,7 +352,6 @@ class ContrastMetagenomesSet(DatasetDict):
         comparator: 'ContrastMetagenomesSet',
         fdr: bool = True,
         sig_thresh: float = FDR_THRESH,
-        estimate_thresh: float = ESTIMATE_THRESH,
         self_label: str = "self",
         comparator_label: str = "comparator",
         width: int = 640,
@@ -332,48 +362,55 @@ class ContrastMetagenomesSet(DatasetDict):
         Whether two analyses agree on the direction of the bins they both call.
 
         Every bin falls into one of nine categories: each analysis called it
-        lower in cases, higher in cases, or not significant. The bars give the
-        observed count of each category beside the count expected if the two
-        analyses were independent. The test in the title is narrower than
-        that table: among the bins both analyses call, it asks whether they
-        agree on the direction more often than the coin flip independence
-        would give, as a two-sided binomial test. An omnibus chi-squared test
-        over all nine cells is dominated by the bins neither analysis calls,
-        and answers a question nobody asked.
+        lower in cases, higher in cases, or neither -- including the bins too
+        scarce to test. The bars give the observed count of each category
+        beside the count expected if the two analyses were independent, and
+        the caption gives the chi-squared test of that independence over all
+        nine cells. It answers whether the two analyses call the same bins in
+        the same direction more than chance would, which a test confined to
+        the bins both call cannot do when one analysis calls nearly every
+        such bin in one direction. Where any expected count is below
+        ``MIN_EXPECTED`` the p-value is taken from tables drawn at random with
+        the same margins rather than from the chi-squared distribution.
+
+        The test counts bins as independent, which they are not: bins of one
+        pangenome rise and fall together. The p-value is optimistic.
 
         The categories are ordered by what they mean rather than by their
         position in the contingency table -- agreement first, then
         disagreement, then bins only one analysis called -- so that the
         question the figure answers can be read left to right.
         """
-        df = self.compare_association(comparator)
-        sig_col = "qvalue" if fdr else "pvalue"
-        for side in ("self", "comparator"):
-            df[f"{side}_sig"] = np.select(
-                [
-                    (df[f"{sig_col}_{side}"] >= sig_thresh) | (df[f"Estimate_{side}"].abs() < estimate_thresh),
-                    df[f"Estimate_{side}"] > 0,
-                ],
-                ["=", ">"],
-                default="<",
-            )
-
+        df = self.compare_association(comparator, fdr=fdr, sig_thresh=sig_thresh)
         observed = df.pivot_table(
-            columns="self_sig",
-            index="comparator_sig",
+            columns="call_self",
+            index="call_comparator",
             values="feature",
             aggfunc="count",
             fill_value=0,
-        ).reindex(index=SIG_LEVELS, columns=SIG_LEVELS, fill_value=0)
+        ).reindex(index=DIRECTIONS, columns=DIRECTIONS, fill_value=0)
         expected = expected_counts(observed)
 
-        agree = int(observed.loc["<", "<"] + observed.loc[">", ">"])
-        both = agree + int(observed.loc["<", ">"] + observed.loc[">", "<"])
-        if both:
-            pvalue = stats.binomtest(agree, both, 0.5).pvalue
-            subtitle = f"Direction agrees for {agree:,} of the {both:,} bins both call: binomial p = {format_pvalue(pvalue)}"
+        directions = observed.loc[["<", ">"], ["<", ">"]]
+        agree = int(directions.loc["<", "<"] + directions.loc[">", ">"])
+        both = int(directions.values.sum())
+        # A call no bin received leaves an empty row or column, which has no
+        # expected count to test against
+        tested = observed.loc[observed.sum(axis=1) > 0, observed.sum(axis=0) > 0]
+        if min(tested.shape) < 2:
+            test = "too few calls to test"
         else:
-            subtitle = "No bin is called by both"
+            chi2, pvalue, dof, expected_tested = stats.chi2_contingency(tested.values)
+            if expected_tested.min() < MIN_EXPECTED:
+                tables = stats.random_table(tested.sum(axis=1), tested.sum(axis=0), seed=0).rvs(MONTE_CARLO_TABLES)
+                exceeding = int(np.sum(np.array([_chi2_statistic(table) for table in tables]) >= chi2))
+                pvalue = (1 + exceeding) / (1 + MONTE_CARLO_TABLES)
+                # With no random table as extreme, the estimate is only a bound
+                method = "Monte Carlo p " + ("≤" if exceeding == 0 else "=")
+            else:
+                method = "p ="
+            test = f"chi-squared = {chi2:.1f}, {dof} df, {method} {format_pvalue(pvalue)}"
+        subtitle = f"Direction agrees for {agree:,} of the {both:,} bins both call; {test}"
 
         ticks, groups, obs, exp = [], [], [], []
         for self_sig, comparator_sig, group in _SIG_CATEGORY_ORDER:
@@ -400,33 +437,41 @@ class ContrastMetagenomesSet(DatasetDict):
         comparator: 'ContrastMetagenomesSet',
         self_label: str = "self",
         comparator_label: str = "comparator",
-        fdr: bool = True,
-        sig_thresh: float = FDR_THRESH,
         width: int = 650,
         height: int = 450,
         file_prefix: str | None = None,
     ) -> go.Figure:
-        """Signed significance of every bin in one set against the other."""
-        value_col = "signed_log10_qvalue" if fdr else "signed_log10_pvalue"
-        value_label = "signed -log10(q-value)" if fdr else "signed -log10(p-value)"
+        """
+        Signed significance of every bin in one set against the other:
+        -log10 p-value, signed by the direction of association. p-values
+        rather than q-values, so that the bins below the abundance filter in
+        either set, which have no q-value, can be shown, in grey. No
+        threshold is drawn, since calls are made on q-values among the bins
+        kept.
+        """
+        value_col = "signed_log10_pvalue"
+        df = self.compare_association(comparator).assign(
+            hover_name=lambda d: d["pangenome"] + "<br>" + d["feature"]
+        )
+        low = df["low_abundance_self"] | df["low_abundance_comparator"]
         fig = self._organism_scatter(
-            self.compare_association(comparator),
+            df.loc[~low],
             x=f"{value_col}_self",
             y=f"{value_col}_comparator",
             marker=dict(size=6, opacity=DENSE_MARKER_OPACITY),
             labels={
                 **ASSOCIATION_LABELS,
-                f"{value_col}_self": f"{value_label}<br>{self_label}",
-                f"{value_col}_comparator": f"{value_label}<br>{comparator_label}",
+                f"{value_col}_self": f"signed -log10(p-value)<br>{self_label}",
+                f"{value_col}_comparator": f"signed -log10(p-value)<br>{comparator_label}",
                 "pvalue_self": f"p-value ({self_label})",
                 "pvalue_comparator": f"p-value ({comparator_label})",
             },
-            hover_data=[f"{value_col}_self", f"{value_col}_comparator", "pvalue_self", "pvalue_comparator"],
+            hover_data=["pvalue_self", "pvalue_comparator"],
             width=width,
             height=height,
         )
+        add_low_abundance(fig, df.loc[low], f"{value_col}_self", f"{value_col}_comparator", "hover_name")
         make_lines(0, fig, **ZERO_LINE)
-        make_lines(-np.log10(sig_thresh), fig, **THRESHOLD_LINE)
         save_image(fig, file_prefix)
         return fig
 
@@ -437,29 +482,30 @@ class ContrastMetagenomesSet(DatasetDict):
         comparator_label: str = "comparator",
         fdr: bool = True,
         sig_thresh: float = FDR_THRESH,
-        estimate_thresh: float = ESTIMATE_THRESH,
+        max_abs_log2_fold_change: float = 4.0,
         width: int = 650,
         height: int = 450,
         file_prefix: str | None = None,
     ) -> go.Figure:
-        """Effect size in one set against the other, for the bins significant in both."""
-        sig_col = "qvalue" if fdr else "pvalue"
-        df = self.compare_association(comparator)
-        df = df.loc[
-            (df[sig_col + "_self"] <= sig_thresh)
-            & (df[sig_col + "_comparator"] <= sig_thresh)
-            & (df["Estimate_self"].abs() >= estimate_thresh)
-            & (df["Estimate_comparator"].abs() >= estimate_thresh)
-        ]
+        """
+        log2 fold change in one set against the other, for the bins called
+        in both, each beyond the axis drawn at its limit as a triangle.
+        """
+        df = self.compare_association(comparator, fdr=fdr, sig_thresh=sig_thresh)
+        df = df.loc[(df["call_self"] != "=") & (df["call_comparator"] != "=")]
+        df = df.assign(
+            log2_fold_change_self=df["log2_fold_change_self"].clip(-max_abs_log2_fold_change, max_abs_log2_fold_change),
+            log2_fold_change_comparator=df["log2_fold_change_comparator"].clip(-max_abs_log2_fold_change, max_abs_log2_fold_change),
+        )
         fig = self._organism_scatter(
             df,
-            x="Estimate_self",
-            y="Estimate_comparator",
+            x="log2_fold_change_self",
+            y="log2_fold_change_comparator",
             marker=dict(size=8, opacity=0.85),
             labels={
                 **ASSOCIATION_LABELS,
-                "Estimate_self": f"Effect size<br>{self_label}",
-                "Estimate_comparator": f"Effect size<br>{comparator_label}",
+                "log2_fold_change_self": f"{LOG2_FOLD_CHANGE_LABEL}<br>{self_label}",
+                "log2_fold_change_comparator": f"{LOG2_FOLD_CHANGE_LABEL}<br>{comparator_label}",
                 "pvalue_self": f"p-value ({self_label})",
                 "pvalue_comparator": f"p-value ({comparator_label})",
                 "qvalue_self": f"q-value ({self_label})",
@@ -469,6 +515,8 @@ class ContrastMetagenomesSet(DatasetDict):
             width=width,
             height=height,
         )
+        mark_beyond_axis(fig, max_abs_log2_fold_change, "x")
+        mark_beyond_axis(fig, max_abs_log2_fold_change, "y")
         make_lines(0, fig, **ZERO_LINE)
         save_image(fig, file_prefix)
         return fig
@@ -480,38 +528,45 @@ class ContrastMetagenomesSet(DatasetDict):
         comparator_label: str = "comparator",
         fdr: bool = True,
         sig_thresh: float = FDR_THRESH,
-        estimate_thresh: float = ESTIMATE_THRESH,
-        max_abs_estimate: float = 2.5,
+        max_abs_log2_fold_change: float = 4.0,
+        show_low_abundance: bool = False,
         width: int = 720,
         height: int = 720,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
-        The volcano plot of each contrast set as a margin of the effect-size
-        scatter of the bins significant in both.
+        The volcano plot of each contrast set as a margin of the fold-change
+        scatter of the bins called in both. ``show_low_abundance`` chooses
+        the version of the two volcanoes (see ``volcano_figure``).
 
         The comparator's volcano is drawn on its side at the upper left, so
-        that its effect-size axis runs alongside the scatter's vertical axis;
+        that its fold-change axis runs alongside the scatter's vertical axis;
         this set's volcano sits below the scatter, sharing its horizontal
         axis. The legend takes the otherwise empty lower-left quadrant.
         """
-        sig_label = "q-value" if fdr else "p-value"
+        sig_label = "p-value" if show_low_abundance else "q-value"
         fig = make_subplots(
             rows=2,
             cols=2,
             horizontal_spacing=0.10,
             vertical_spacing=0.10,
-            subplot_titles=(comparator_label, "Significant in both", None, self_label),
+            subplot_titles=(comparator_label, "Called in both", None, self_label),
         )
-        volcano = dict(estimate_thresh=estimate_thresh, fdr_thresh=sig_thresh, max_abs_estimate=max_abs_estimate)
+        volcano = dict(fdr_thresh=sig_thresh, max_abs_log2_fold_change=max_abs_log2_fold_change, show_low_abundance=show_low_abundance)
         # The legend is drawn from this set's volcano, which shows every
         # organism; the other panels repeat the same names
         for trace in self.volcano_plot(**volcano).data:
-            fig.add_trace(trace.update(showlegend=True, legendgroup=trace.name), row=2, col=2)
+            fig.add_trace(trace.update(showlegend=trace.meta != _BEYOND_META, legendgroup=trace.name), row=2, col=2)
         for trace in comparator.volcano_plot(**volcano).data:
             fig.add_trace(trace.update(x=trace.y, y=trace.x, showlegend=False, legendgroup=trace.name), row=1, col=1)
+        # The comparator's volcano lies on its side, so its triangles turn with it
+        for trace in fig.select_traces(row=1, col=1):
+            if trace.marker.symbol is not None and not isinstance(trace.marker.symbol, str):
+                trace.marker.symbol = [
+                    {"triangle-left": "triangle-down", "triangle-right": "triangle-up"}.get(s, s) for s in trace.marker.symbol
+                ]
         for trace in self.compare_association_scatter(
-            comparator=comparator, fdr=fdr, sig_thresh=sig_thresh, estimate_thresh=estimate_thresh,
+            comparator=comparator, fdr=fdr, sig_thresh=sig_thresh, max_abs_log2_fold_change=max_abs_log2_fold_change,
         ).data:
             fig.add_trace(trace.update(showlegend=False, legendgroup=trace.name), row=1, col=2)
 
@@ -520,12 +575,13 @@ class ContrastMetagenomesSet(DatasetDict):
         fig.update_xaxes(matches="x4", row=1, col=2)
 
         make_lines(0, fig, vline=False, row=1, col=1, **ZERO_LINE)
-        make_lines(estimate_thresh, fig, vline=False, row=1, col=1, **THRESHOLD_LINE)
-        make_lines(-np.log10(sig_thresh), fig, hline=False, neg=False, row=1, col=1, **THRESHOLD_LINE)
         make_lines(0, fig, row=1, col=2, **ZERO_LINE)
         make_lines(0, fig, hline=False, row=2, col=2, **ZERO_LINE)
-        make_lines(estimate_thresh, fig, hline=False, row=2, col=2, **THRESHOLD_LINE)
-        make_lines(-np.log10(sig_thresh), fig, vline=False, neg=False, row=2, col=2, **THRESHOLD_LINE)
+        if not show_low_abundance:
+            make_lines(MIN_ABS_LOG2_FOLD_CHANGE, fig, vline=False, row=1, col=1, **THRESHOLD_LINE)
+            make_lines(-np.log10(sig_thresh), fig, hline=False, neg=False, row=1, col=1, **THRESHOLD_LINE)
+            make_lines(MIN_ABS_LOG2_FOLD_CHANGE, fig, hline=False, row=2, col=2, **THRESHOLD_LINE)
+            make_lines(-np.log10(sig_thresh), fig, vline=False, neg=False, row=2, col=2, **THRESHOLD_LINE)
 
         fig.update_layout(
             width=width,
@@ -534,17 +590,30 @@ class ContrastMetagenomesSet(DatasetDict):
             legend=dict(title_text="Organism", x=0.0, y=0.42, xanchor="left", yanchor="top"),
             margin=dict(t=50),
         )
+        # The scatter shares the comparator volcano's vertical axis, so only
+        # the volcano names it
         fig.update_xaxes(title_text=f"-log10({sig_label})", row=1, col=1)
-        fig.update_yaxes(title_text=f"Effect size, {comparator_label}", row=1, col=1)
-        fig.update_yaxes(title_text=f"Effect size, {comparator_label}", row=1, col=2)
-        fig.update_xaxes(title_text=f"Effect size, {self_label}", row=2, col=2)
+        fig.update_yaxes(title_text=f"log<sub>2</sub> fold change, {comparator_label}", row=1, col=1)
+        fig.update_yaxes(title_text=None, row=1, col=2)
+        fig.update_xaxes(title_text=f"log<sub>2</sub> fold change, {self_label}", row=2, col=2)
         fig.update_yaxes(title_text=f"-log10({sig_label})", row=2, col=2)
         save_image(fig, file_prefix)
         return fig
 
 
-#: The three ways an analysis can call a bin, and how each is drawn
-SIG_LEVELS = ["<", "=", ">"]
+#: Below this expected count in any cell, the chi-squared distribution is a
+#: poor guide and the p-value comes from random tables with the same margins
+MIN_EXPECTED = 5
+MONTE_CARLO_TABLES = 10_000
+
+
+def _chi2_statistic(table: np.ndarray) -> float:
+    """Pearson's chi-squared statistic of a contingency table with no empty margin."""
+    expected = np.outer(table.sum(axis=1), table.sum(axis=0)) / table.sum()
+    return float(((table - expected) ** 2 / expected).sum())
+
+
+#: How each way an analysis can call a bin is drawn
 _SIG_ARROW = {"<": "&#8595;", ">": "&#8593;", "=": "ns"}
 
 #: The nine categories, ordered by meaning: (self, comparator, group)

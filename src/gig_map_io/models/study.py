@@ -28,7 +28,8 @@ from .phylogeny_set import PangenomePhylogenySet
 from .sample_group import SampleGroup
 from ..helpers.enrichment import enrich_organisms, plot_enrichment
 from ..helpers.ncbi import genome_names
-from ..helpers.style import ESTIMATE_THRESH, FDR_THRESH, organism_order
+from ..helpers.significance import call_direction
+from ..helpers.style import FDR_THRESH, organism_order
 
 #: The two sets the significant bins are split into, by the sign of their effect
 DIRECTIONS = {"Positively associated": "positive", "Negatively associated": "negative"}
@@ -207,36 +208,35 @@ class Study:
 
     def significant_bins(
         self,
-        estimate_thresh: float = ESTIMATE_THRESH,
         fdr_thresh: float = FDR_THRESH,
         direction: str | None = None,
     ) -> pd.DataFrame:
         """
-        Association results for the bins passing the significance thresholds.
+        Association results for the bins called higher or lower in cases by
+        ``helpers.significance.call_direction``, with the call in ``call``.
 
         Parameters
         ----------
-        estimate_thresh:
-            Minimum absolute effect size.
         fdr_thresh:
             Maximum FDR-adjusted q-value.
         direction:
-            ``"positive"`` or ``"negative"`` to keep only one sign of effect;
-            ``None`` (default) keeps both.
+            ``"positive"`` or ``"negative"`` to keep only the bins higher or
+            lower in cases; ``None`` (default) keeps both.
 
         Returns
         -------
-        DataFrame indexed by (pangenome, feature).
+        DataFrame indexed by (pangenome, feature), in order of p-value.
         """
-        df = self.association.set_index(["pangenome", "feature"])
-        df = df.loc[(df["Estimate"].abs() > estimate_thresh) & (df["qvalue"] < fdr_thresh)]
-        if direction == "positive":
-            df = df.loc[df["Estimate"] > 0]
-        elif direction == "negative":
-            df = df.loc[df["Estimate"] < 0]
-        elif direction is not None:
+        if direction not in (None, "positive", "negative"):
             raise ValueError("direction must be 'positive', 'negative', or None")
-        return df.sort_values(by="pvalue")
+        df = (
+            self.association
+            .assign(call=lambda d: call_direction(d, sig_thresh=fdr_thresh))
+            .set_index(["pangenome", "feature"])
+        )
+        keep = {None: [">", "<"], "positive": [">"], "negative": ["<"]}[direction]
+        # Stable, so that bins tied on p-value keep the association's order
+        return df.loc[df["call"].isin(keep)].sort_values(by="pvalue", kind="stable")
 
     @cached_property
     def tested_bins(self) -> pd.MultiIndex:
@@ -412,6 +412,9 @@ class Study:
 
     def volcano_plot(self, **kwargs: Any) -> go.Figure:
         return self.contrasts.volcano_plot(**kwargs)
+
+    def ma_plot(self, **kwargs: Any) -> go.Figure:
+        return self.contrasts.ma_plot(**kwargs)
 
     def bin_abundance_heatmap(self, features, **kwargs: Any) -> go.Figure:
         """
