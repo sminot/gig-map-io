@@ -215,7 +215,8 @@ def plot_positivity_heatmap(
         legend=dict(x=1.02, y=1.0, xanchor="left", yanchor="top"),
         margin=dict(t=40, b=150),
     )
-    fig.update_xaxes(showticklabels=True, tickangle=-90, row=2, col=1)
+    # One label per feature: left to itself plotly drops every other one once they crowd
+    fig.update_xaxes(showticklabels=True, tickangle=-90, dtick=1, row=2, col=1)
     fig.update_yaxes(showticklabels=show_sample_labels, title_text="Samples", row=2, col=1)
     fig.update_yaxes(title_text="log2 odds ratio", row=1, col=1)
     fig.update_xaxes(showgrid=False, row=2, col=2)
