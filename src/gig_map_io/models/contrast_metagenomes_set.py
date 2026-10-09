@@ -22,11 +22,12 @@ from gig_map_io.helpers.observed_expected import expected_counts, plot_observed_
 from gig_map_io.helpers.sidebar import add_category_sidebar
 from gig_map_io.helpers.significance import DIRECTIONS, add_significance, call_direction
 from gig_map_io.helpers.style import (
-    DENSE_MARKER_OPACITY, FDR_THRESH, MIN_ABS_LOG2_FOLD_CHANGE, QUALITATIVE, TEMPLATE,
+    DENSE_MARKER_OPACITY, FDR_THRESH, MIN_ABS_LOG2_FOLD_CHANGE, QUALITATIVE, SIMPLE_TEMPLATE, TEMPLATE,
     THRESHOLD_LINE, TOP_LEGEND, ZERO_LINE, group_colors, organism_colors, organism_order,
 )
 from .contrast_metagenomes import (
-    ASSOCIATION_HOVER, ASSOCIATION_LABELS, LOG2_FOLD_CHANGE_LABEL, ContrastMetagenomes,
+    ASSOCIATION_HOVER, ASSOCIATION_LABELS, LOG2_FOLD_CHANGE_LABEL, MIN_MARKER_PX, SIZE_BY_ABUNDANCE,
+    ContrastMetagenomes,
     _BEYOND_META, add_low_abundance, ma_figure, mark_beyond_axis, volcano_figure,
 )
 from .dataset_dict import DatasetDict
@@ -136,7 +137,7 @@ class ContrastMetagenomesSet(DatasetDict):
         return fig
 
     def _organism_traces(self) -> dict:
-        """``px.scatter`` arguments that color bins by organism, as everywhere."""
+        """``px.scatter`` arguments that color bins by organism, as everywhere, and size them by abundance."""
         return dict(
             hover_name="hover_name",
             color="pangenome",
@@ -144,6 +145,7 @@ class ContrastMetagenomesSet(DatasetDict):
             category_orders={"pangenome": organism_order(self.pangenome_names)},
             hover_data=ASSOCIATION_HOVER,
             opacity=DENSE_MARKER_OPACITY,
+            **SIZE_BY_ABUNDANCE,
         )
 
     def volcano_plot(
@@ -168,7 +170,7 @@ class ContrastMetagenomesSet(DatasetDict):
             **self._organism_traces(),
             **kwargs
         )
-        fig.update_traces(marker=dict(size=6, line_width=0), selector=lambda t: t.name != "Low abundance")
+        fig.update_traces(marker_line_width=0, marker_sizemin=MIN_MARKER_PX)
         save_image(fig, file_prefix)
         return fig
 
@@ -182,7 +184,7 @@ class ContrastMetagenomesSet(DatasetDict):
         """M-A plot from the association results, colored by organism (see ``ma_figure``)."""
         df = self.association.assign(hover_name=lambda d: d["pangenome"] + "<br>" + d["feature"])
         fig = ma_figure(df, max_abs_log2_fold_change, width=width, height=height, **self._organism_traces())
-        fig.update_traces(marker=dict(size=6, line_width=0), selector=lambda t: t.name != "Low abundance")
+        fig.update_traces(marker_line_width=0, marker_sizemin=MIN_MARKER_PX)
         save_image(fig, file_prefix)
         return fig
 
@@ -347,6 +349,50 @@ class ContrastMetagenomesSet(DatasetDict):
             )
         )
 
+    def _call_contingency(
+        self,
+        comparator: 'ContrastMetagenomesSet',
+        fdr: bool,
+        sig_thresh: float,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, str]:
+        """
+        The nine-category table of the two sets' calls (rows the comparator's,
+        columns this set's), the counts expected if the calls were
+        independent, and a caption line giving the direction agreement and the
+        chi-squared test described in ``compare_sig_categories``.
+        """
+        df = self.compare_association(comparator, fdr=fdr, sig_thresh=sig_thresh)
+        observed = df.pivot_table(
+            columns="call_self",
+            index="call_comparator",
+            values="feature",
+            aggfunc="count",
+            fill_value=0,
+        ).reindex(index=DIRECTIONS, columns=DIRECTIONS, fill_value=0)
+        expected = expected_counts(observed)
+
+        directions = observed.loc[["<", ">"], ["<", ">"]]
+        agree = int(directions.loc["<", "<"] + directions.loc[">", ">"])
+        both = int(directions.values.sum())
+        # A call no bin received leaves an empty row or column, which has no
+        # expected count to test against
+        tested = observed.loc[observed.sum(axis=1) > 0, observed.sum(axis=0) > 0]
+        if min(tested.shape) < 2:
+            test = "too few calls to test"
+        else:
+            chi2, pvalue, dof, expected_tested = stats.chi2_contingency(tested.values)
+            if expected_tested.min() < MIN_EXPECTED:
+                tables = stats.random_table(tested.sum(axis=1), tested.sum(axis=0), seed=0).rvs(MONTE_CARLO_TABLES)
+                exceeding = int(np.sum(np.array([_chi2_statistic(table) for table in tables]) >= chi2))
+                pvalue = (1 + exceeding) / (1 + MONTE_CARLO_TABLES)
+                # With no random table as extreme, the estimate is only a bound
+                method = "Monte Carlo p " + ("≤" if exceeding == 0 else "=")
+            else:
+                method = "p ="
+            test = f"chi-squared = {chi2:.1f}, {dof} df, {method} {format_pvalue(pvalue)}"
+        subtitle = f"Direction agrees for {agree:,} of the {both:,} bins both call; {test}"
+        return observed, expected, subtitle
+
     def compare_sig_categories(
         self,
         comparator: 'ContrastMetagenomesSet',
@@ -381,36 +427,7 @@ class ContrastMetagenomesSet(DatasetDict):
         disagreement, then bins only one analysis called -- so that the
         question the figure answers can be read left to right.
         """
-        df = self.compare_association(comparator, fdr=fdr, sig_thresh=sig_thresh)
-        observed = df.pivot_table(
-            columns="call_self",
-            index="call_comparator",
-            values="feature",
-            aggfunc="count",
-            fill_value=0,
-        ).reindex(index=DIRECTIONS, columns=DIRECTIONS, fill_value=0)
-        expected = expected_counts(observed)
-
-        directions = observed.loc[["<", ">"], ["<", ">"]]
-        agree = int(directions.loc["<", "<"] + directions.loc[">", ">"])
-        both = int(directions.values.sum())
-        # A call no bin received leaves an empty row or column, which has no
-        # expected count to test against
-        tested = observed.loc[observed.sum(axis=1) > 0, observed.sum(axis=0) > 0]
-        if min(tested.shape) < 2:
-            test = "too few calls to test"
-        else:
-            chi2, pvalue, dof, expected_tested = stats.chi2_contingency(tested.values)
-            if expected_tested.min() < MIN_EXPECTED:
-                tables = stats.random_table(tested.sum(axis=1), tested.sum(axis=0), seed=0).rvs(MONTE_CARLO_TABLES)
-                exceeding = int(np.sum(np.array([_chi2_statistic(table) for table in tables]) >= chi2))
-                pvalue = (1 + exceeding) / (1 + MONTE_CARLO_TABLES)
-                # With no random table as extreme, the estimate is only a bound
-                method = "Monte Carlo p " + ("≤" if exceeding == 0 else "=")
-            else:
-                method = "p ="
-            test = f"chi-squared = {chi2:.1f}, {dof} df, {method} {format_pvalue(pvalue)}"
-        subtitle = f"Direction agrees for {agree:,} of the {both:,} bins both call; {test}"
+        observed, expected, subtitle = self._call_contingency(comparator, fdr, sig_thresh)
 
         ticks, groups, obs, exp = [], [], [], []
         for self_sig, comparator_sig, group in _SIG_CATEGORY_ORDER:
@@ -431,6 +448,69 @@ class ContrastMetagenomesSet(DatasetDict):
             height=height,
             file_prefix=file_prefix,
         )
+
+    def compare_sig_heatmap(
+        self,
+        comparator: 'ContrastMetagenomesSet',
+        fdr: bool = True,
+        sig_thresh: float = FDR_THRESH,
+        self_label: str = "self",
+        comparator_label: str = "comparator",
+        width: int = 600,
+        height: int = 540,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        The nine categories of ``compare_sig_categories`` as a 3x3 grid, one
+        set's call across and the other's up: each cell colored by how many
+        times more (warm) or fewer (cool) bins it holds than independence
+        predicts, on a log scale centered on 1x, and labeled with its observed
+        and expected counts. Bins agreeing in direction lie on the diagonal
+        from lower left to upper right. The caption carries the same test.
+        """
+        observed, expected, subtitle = self._call_contingency(comparator, fdr, sig_thresh)
+        # Plotly draws the first row at the bottom
+        across, up = ["<", "=", ">"], ["<", "=", ">"]
+        observed, expected = observed.loc[up, across], expected.loc[up, across]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            log_fold = np.log2(observed / expected.where(expected > 0))
+        # One scale for every comparison, so a color means the same in each; a
+        # cell beyond it, or with no bins where some were expected, sits at
+        # the end, and its label gives the exact fold
+        limit = HEATMAP_LOG2_LIMIT
+        z = log_fold.clip(-limit, limit)
+        names = {"<": "Lower in cases", "=": "Not called", ">": "Higher in cases"}
+        fig = go.Figure(go.Heatmap(
+            z=z.values, x=[names[c] for c in across], y=[names[r] for r in up],
+            colorscale="RdBu_r", zmid=0, zmin=-limit, zmax=limit, xgap=2, ygap=2, hoverinfo="skip",
+            colorbar=dict(
+                title="Observed /<br>expected", thickness=14,
+                tickvals=list(range(-limit, limit + 1)),
+                ticktext=[f"{2 ** v}×" if v >= 0 else f"1/{2 ** -v}×" for v in range(-limit, limit + 1)],
+            ),
+        ))
+        for r in up:
+            for c in across:
+                cell = log_fold.loc[r, c]
+                fold = f"{2.0 ** cell:.2f}×" if np.isfinite(cell) else ("0×" if expected.loc[r, c] > 0 else "")
+                # Dark cells take white text
+                dark = np.isfinite(z.loc[r, c]) and abs(z.loc[r, c]) > 0.6 * limit
+                fig.add_annotation(
+                    x=names[c], y=names[r], showarrow=False,
+                    text=f"<b>{observed.loc[r, c]:,}</b><br>{expected.loc[r, c]:,.1f} expected<br>{fold}",
+                    font=dict(size=12, color="#ffffff" if dark else "#1a1a1a"),
+                )
+        fig.add_annotation(
+            x=0.5, xref="paper", y=0, yref="paper", yshift=-70, xanchor="center", yanchor="top",
+            showarrow=False, font=dict(size=11, color="#555555"), text=subtitle,
+        )
+        fig.update_layout(
+            template=SIMPLE_TEMPLATE, width=width, height=height, margin=dict(t=30, b=110),
+            xaxis=dict(title=self_label, side="bottom", showline=False, ticks=""),
+            yaxis=dict(title=comparator_label, showline=False, ticks=""),
+        )
+        save_image(fig, file_prefix)
+        return fig
 
     def compare_sig_scatter(
         self,
@@ -600,6 +680,10 @@ class ContrastMetagenomesSet(DatasetDict):
         save_image(fig, file_prefix)
         return fig
 
+
+#: The color scale of the concordance heatmaps runs from 2**-limit to
+#: 2**limit times the expected count
+HEATMAP_LOG2_LIMIT = 2
 
 #: Below this expected count in any cell, the chi-squared distribution is a
 #: poor guide and the p-value comes from random tables with the same margins

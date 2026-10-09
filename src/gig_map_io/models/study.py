@@ -476,6 +476,9 @@ class Study:
     def compare_sig_categories(self, comparator: "Study", **kwargs: Any) -> go.Figure:
         return self._compare("compare_sig_categories", comparator, kwargs)
 
+    def compare_sig_heatmap(self, comparator: "Study", **kwargs: Any) -> go.Figure:
+        return self._compare("compare_sig_heatmap", comparator, kwargs)
+
     def compare_association_scatter(self, comparator: "Study", **kwargs: Any) -> go.Figure:
         return self._compare("compare_association_scatter", comparator, kwargs)
 

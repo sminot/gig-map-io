@@ -128,6 +128,7 @@ ibd = Study.from_json("studies/ibd_combined.json")
 
 study.compare_sig_scatter(ibd, file_prefix="out/scatter")
 study.compare_sig_categories(ibd, file_prefix="out/categories")
+study.compare_sig_heatmap(ibd, file_prefix="out/categories_heatmap")
 study.compare_volcano_with_estimate(ibd, file_prefix="out/joint_volcano")
 ```
 

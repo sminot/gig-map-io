@@ -42,6 +42,11 @@ ASSOCIATION_LABELS = dict(
     pvalue="p-value",
 )
 
+#: Volcano and M-A points are sized by mean abundance, by area; the floor
+#: keeps the many rare bins visible beside a few that run to thousands of RPKM
+SIZE_BY_ABUNDANCE = dict(size="mean_abund", size_max=14)
+MIN_MARKER_PX = 4
+
 #: The columns every association plot shows on hover
 ASSOCIATION_HOVER = ["mean_abund", "log2_fold_change", "Estimate", "pvalue", "qvalue"]
 
@@ -79,7 +84,7 @@ def _take_points(trace, keep: np.ndarray) -> None:
         owner = trace if len(path) == 1 else trace[path[0]]
         value = owner[path[-1]]
         if value is not None and not isinstance(value, (str, int, float)):
-            owner[path[-1]] = np.asarray(value, dtype=object)[keep]
+            owner[path[-1]] = np.asarray(value)[keep]
 
 
 def mark_beyond_axis(fig: go.Figure, limit: float, axis: str) -> None:
@@ -126,7 +131,8 @@ def add_low_abundance(fig: go.Figure, low: pd.DataFrame, x: str, y: str, hover_n
     fig.add_trace(
         go.Scattergl(
             x=low[x], y=low[y], mode="markers", name="Low abundance", legendrank=1001,
-            marker=dict(color=NEUTRAL, opacity=0.35, size=5, line_width=0),
+            # The least abundant bins of all, so drawn at the smallest size
+            marker=dict(color=NEUTRAL, opacity=0.35, size=MIN_MARKER_PX, line_width=0),
             hovertext=low[hover_name], hoverinfo="text",
         ),
     )
@@ -326,15 +332,14 @@ class ContrastMetagenomes(Dataset):
             self.association, fdr_thresh, max_abs_log2_fold_change, show_low_abundance, fold_change_label,
             hover_data=ASSOCIATION_HOVER,
             hover_name="feature",
-            size="mean_abund",
-            size_max=14,
             color_discrete_sequence=[PRIMARY],
             opacity=DENSE_MARKER_OPACITY,
             width=width,
             height=height,
+            **SIZE_BY_ABUNDANCE,
             **kwargs
         )
-        fig.update_traces(marker_line_width=0)
+        fig.update_traces(marker_line_width=0, marker_sizemin=MIN_MARKER_PX)
         y = "neg_log10_pvalue" if show_low_abundance else "neg_log10_qvalue"
         for bin in label_bins:
             point = self.association.loc[self.association["feature"] == bin]
@@ -368,8 +373,9 @@ class ContrastMetagenomes(Dataset):
             opacity=DENSE_MARKER_OPACITY,
             width=width,
             height=height,
+            **SIZE_BY_ABUNDANCE,
         )
-        fig.update_traces(marker_line_width=0)
+        fig.update_traces(marker_line_width=0, marker_sizemin=MIN_MARKER_PX)
         save_image(fig, file_prefix)
         return fig
 
