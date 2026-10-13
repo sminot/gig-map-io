@@ -315,7 +315,7 @@ class PangenomeSet(DatasetDict):
         self,
         features: pd.MultiIndex | pd.DataFrame,
         qvalue_threshold: float = 0.2,
-        width: int = 800,
+        width: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -341,7 +341,7 @@ class PangenomeSet(DatasetDict):
         self,
         features: pd.MultiIndex,
         qvalue_threshold: float = 0.2,
-        width: int = 800,
+        width: int | None = None,
         height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:

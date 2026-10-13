@@ -15,6 +15,10 @@ from .style import SIMPLE_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
+TANGLEGRAM_WIDTH = 720
+TANGLEGRAM_HEIGHT_RANGE = (380, 700)
+TANGLEGRAM_PX_PER_LEAF = 12
+
 
 class Phylogeny:
     """
@@ -108,7 +112,7 @@ class Phylogeny:
             if not child.is_terminal():
                 self._get_children(child)
 
-    def plot_lines(self, fig, row=1, col=1, y_offset=0):
+    def plot_lines(self, fig, row=1, col=1):
 
         # For each internal node, draw a line to its children
         for parent, children in self.children.items():
@@ -121,9 +125,9 @@ class Phylogeny:
                             self.coords[child]['x']
                         ],
                         y=[
-                            self.coords[parent]['y'] + y_offset,
-                            self.coords[child]['y'] + y_offset,
-                            self.coords[child]['y'] + y_offset
+                            self.coords[parent]['y'],
+                            self.coords[child]['y'],
+                            self.coords[child]['y']
                         ],
                         mode="lines",
                         showlegend=False,
@@ -133,12 +137,12 @@ class Phylogeny:
                     col=col
                 )
 
-    def plot_points(self, fig, mode: str, row=1, col=1, y_offset=0.):
+    def plot_points(self, fig, mode: str, row=1, col=1):
         # Draw each terminal node
         fig.add_trace(
             go.Scatter(
                 x=self._get_coord('x'),
-                y=self._get_coord('y', offset=y_offset),
+                y=self._get_coord('y'),
                 text=[node.name for node in self.tree.get_terminals()],
                 mode=mode,
                 showlegend=False,
@@ -150,24 +154,21 @@ class Phylogeny:
             col=col
         )
 
-    def _get_coord(self, kw: str, offset=0.):
+    def _get_coord(self, kw: str):
         """Get a particular value for every item in the tree."""
         return [
-            self.coords[node.name][kw] + offset
+            self.coords[node.name][kw]
             for node in self.tree.get_terminals()
         ]
 
-    def _plot_tracer(self, fig, use_nodes, row=1, col=1, y_offset=0.):
+    def _plot_tracer(self, fig, use_nodes, row=1, col=1):
         # Draw a line from each terminal node to the edge of the graph
         edge = np.max(self._get_coord("x"))
         for node_name in use_nodes:
             fig.add_trace(
                 go.Scatter(
                     x=[self.coords[node_name]['x'], edge],
-                    y=[
-                        self.coords[node_name]['y'] + y_offset,
-                        self.coords[node_name]['y'] + y_offset
-                    ],
+                    y=[self.coords[node_name]['y'], self.coords[node_name]['y']],
                     mode="lines",
                     showlegend=False,
                     line=dict(dash='dot', color="#b0b0b0", width=1),
@@ -221,13 +222,15 @@ class Phylogeny:
     def compare(
         self,
         comp: 'Phylogeny',
-        height: int,
-        width: int,
         file_prefix: str | None = None
     ):
         """
         A tanglegram: this tree on the left, ``comp`` on the right with its
         leaves reordered to follow this one, and the shared leaves joined.
+        Both trees span the full height, so the height follows ``comp``'s
+        leaf count: this tree is the core genome, hundreds of leaves that
+        are read as clades, while ``comp`` is a bin's tree of a few dozen
+        whose individual leaves need room.
         """
         # Sorted, not merely deduplicated: this order is the order the tracer
         # lines are added to the figure, and set iteration order varies between
@@ -238,41 +241,8 @@ class Phylogeny:
 
         comp.align_trees(self)
         self.find_coords()
-        comp.find_coords()
+        comp.find_coords(scale=self.n_leaves / comp.n_leaves)
 
-        # Scale the comparison tree so that the shared leaves span the same height
-        if len(shared_nodes) > 1:
-
-            # Get the y-span for just the shared nodes
-            self_shared_y = [self.coords[node]['y'] for node in shared_nodes]
-            self_y_span = np.max(self_shared_y) - np.min(self_shared_y)
-
-            comp_shared_y = [comp.coords[node]['y'] for node in shared_nodes]
-            comp_y_span = np.max(comp_shared_y) - np.min(comp_shared_y)
-
-            # Set the scale so that the spans will equal
-            scale = self_y_span / comp_y_span
-
-            # Regenerate the coordinates for the second tree
-            comp.find_coords(scale=scale)
-
-            # Set the offset so that the bottom node lines up
-            y_offset = np.min([
-                self.coords[node]['y']
-                for node in shared_nodes
-            ])
-
-        else:
-
-            # For every shared node, find the average y offset
-            y_offset = np.mean([
-                self.coords[node]['y'] - comp.coords[node]['y']
-                for node in shared_nodes
-            ])
-
-        # Plot the two trees against each other
-
-        # Set up a figure with two subplots
         fig = make_subplots(
             cols=3,
             rows=1,
@@ -287,16 +257,16 @@ class Phylogeny:
         self.plot_points(fig, mode="markers")
         self._plot_tracer(fig, shared_nodes)
 
-        comp.plot_lines(fig, row=1, col=3, y_offset=y_offset)
-        comp.plot_points(fig, mode="markers", row=1, col=3, y_offset=y_offset)
-        comp._plot_tracer(fig, shared_nodes, row=1, col=3, y_offset=y_offset)
+        comp.plot_lines(fig, row=1, col=3)
+        comp.plot_points(fig, mode="markers", row=1, col=3)
+        comp._plot_tracer(fig, shared_nodes, row=1, col=3)
 
         # Draw lines between each shared leaf
         for node_name in shared_nodes:
             fig.add_trace(
                 go.Scatter(
                     x=[0, 1],
-                    y=[self.coords[node_name]['y'], comp.coords[node_name]['y'] + y_offset],
+                    y=[self.coords[node_name]['y'], comp.coords[node_name]['y']],
                     mode="lines",
                     showlegend=False,
                     line=dict(dash='dot', color="#b0b0b0", width=1),
@@ -312,26 +282,28 @@ class Phylogeny:
             showgrid=False,
             zeroline=False
         )
+        snp_rate_axis = dict(
+            automargin=True,
+            title_text="SNP rate",
+            exponentformat="power"
+        )
+        margin = dict(l=50, r=30, b=70, t=60)
 
         fig.update_layout(
             template=SIMPLE_TEMPLATE,
             yaxis=blank_axis,
             yaxis2=blank_axis,
             yaxis3=blank_axis,
-            xaxis=dict(
-                automargin=True,
-                title_text="SNP rate"
-            ),
+            xaxis=snp_rate_axis,
             xaxis2=blank_axis,
-            xaxis3=dict(
-                automargin=True,
-                title_text="SNP rate",
-                autorange="reversed"
-            ),
+            xaxis3=dict(**snp_rate_axis, autorange="reversed"),
             # Leaves are drawn as points, not labels, so no label margin
-            margin=dict(l=50, r=30, b=70, t=60),
-            height=height,
-            width=width
+            margin=margin,
+            height=int(np.clip(
+                margin["t"] + margin["b"] + TANGLEGRAM_PX_PER_LEAF * comp.n_leaves,
+                *TANGLEGRAM_HEIGHT_RANGE
+            )),
+            width=TANGLEGRAM_WIDTH
         )
 
         save_image(fig, file_prefix)

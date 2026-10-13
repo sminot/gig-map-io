@@ -142,8 +142,10 @@ def legend_above(fig: go.Figure, offset_px: int = 30) -> None:
     express draws at the top of the first facet. Needs the figure's height to
     be set already.
     """
-    top = fig.layout.margin.t or 0
+    top = max(fig.layout.margin.t or 0, offset_px + LEGEND_ROW_PX)
+    # Placed against the whole canvas: a paper-relative y measures the offset
+    # in fractions of the plot area, which varies with the margins
     fig.update_layout(
-        legend=dict(TOP_LEGEND, y=1 + offset_px / fig.layout.height),
-        margin=dict(t=max(top, offset_px + LEGEND_ROW_PX)),
+        legend=dict(TOP_LEGEND, yref="container", y=1 - (top - offset_px) / fig.layout.height),
+        margin=dict(t=top),
     )

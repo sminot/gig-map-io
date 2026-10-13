@@ -15,6 +15,19 @@ from .save_image import save_image
 from .sidebar import add_category_sidebar
 from .style import NEUTRAL, PRIMARY, QUALITATIVE, TEMPLATE, TOP_LEGEND, ZERO_LINE, group_colors
 
+#: Positivity heatmap layout, in px: one feature's column, one sample's row
+#: with and without its label, the shortest heatmap, one grouping variable's
+#: sidebar column, the odds-ratio panel above, the gap between panels, and
+#: margins holding the axis titles, the turned feature labels and the legend
+HEATMAP_FEATURE_PX = 16
+HEATMAP_SAMPLE_PX = 14
+HEATMAP_SAMPLE_PX_UNLABELED = 6
+MIN_SAMPLES_PX = 300
+SIDEBAR_COLUMN_PX = 24
+ODDS_PANEL_PX = 130
+PANEL_GAP_PX = 8
+POSITIVITY_MARGIN_PX = dict(l=70, r=180, t=40, b=200)
+
 
 def log2_odds(pos_a: int, neg_a: int, pos_b: int, neg_b: int) -> float | None:
     """
@@ -120,8 +133,8 @@ def plot_positivity_heatmap(
     grouping: pd.DataFrame,
     group_orders: dict[str, list],
     threshold: float = 100,
-    width: int = 1200,
-    height: int = 800,
+    width: int | None = None,
+    height: int | None = None,
     file_prefix: str | None = None,
     show_sample_labels: bool = True,
 ) -> go.Figure:
@@ -137,6 +150,9 @@ def plot_positivity_heatmap(
 
     ``group_orders`` gives each grouping variable's categories in display
     order, the first being the case-like one, which sets their colors.
+
+    The size follows the number of features, samples and grouping variables
+    unless given.
     """
     shared_idx = rpkm.index.intersection(grouping.index)
     positive = (rpkm.loc[shared_idx] >= threshold).astype(int)
@@ -157,13 +173,25 @@ def plot_positivity_heatmap(
             categories[var_name] = sorted(present)
             colors[var_name] = dict(zip(categories[var_name], QUALITATIVE))
 
+    # Each panel sized in pixels from what it holds, so that a sidebar of one
+    # column is not given a fifth of the width
+    features_px = HEATMAP_FEATURE_PX * len(feature_labels)
+    sidebar_px = SIDEBAR_COLUMN_PX * len(meta.columns)
+    samples_px = max(MIN_SAMPLES_PX, (HEATMAP_SAMPLE_PX if show_sample_labels else HEATMAP_SAMPLE_PX_UNLABELED) * len(positive))
+    if width is None:
+        width = POSITIVITY_MARGIN_PX["l"] + features_px + PANEL_GAP_PX + sidebar_px + POSITIVITY_MARGIN_PX["r"]
+    if height is None:
+        height = POSITIVITY_MARGIN_PX["t"] + ODDS_PANEL_PX + PANEL_GAP_PX + samples_px + POSITIVITY_MARGIN_PX["b"]
+    plot_width = width - POSITIVITY_MARGIN_PX["l"] - POSITIVITY_MARGIN_PX["r"]
+    plot_height = height - POSITIVITY_MARGIN_PX["t"] - POSITIVITY_MARGIN_PX["b"]
+
     # (1,1) odds-ratio bars over (2,1) the heatmap, with (2,2) the sidebar
     fig = make_subplots(
         rows=2, cols=2,
-        column_widths=[0.8, 0.2],
-        row_heights=[0.2, 0.8],
-        horizontal_spacing=0.02,
-        vertical_spacing=0.02,
+        column_widths=[features_px, sidebar_px],
+        row_heights=[ODDS_PANEL_PX, plot_height - ODDS_PANEL_PX - PANEL_GAP_PX],
+        horizontal_spacing=PANEL_GAP_PX / plot_width,
+        vertical_spacing=PANEL_GAP_PX / plot_height,
         specs=[[{"type": "bar"}, None], [{"type": "heatmap"}, {"type": "heatmap"}]],
     )
 
@@ -202,7 +230,7 @@ def plot_positivity_heatmap(
     for var_name in meta.columns:
         add_category_sidebar(
             fig, meta[var_name].set_axis([str(s) for s in positive.index]), categories[var_name], colors[var_name],
-            row=2, col=2, x=str(var_name), legend_group=str(var_name),
+            row=2, col=2, x=str(var_name).capitalize(), legend_group=str(var_name).capitalize(),
         )
 
     fig.update_layout(
@@ -213,11 +241,14 @@ def plot_positivity_heatmap(
         yaxis3=dict(matches="y2", showticklabels=False),
         xaxis=dict(matches="x2", showticklabels=False),
         legend=dict(x=1.02, y=1.0, xanchor="left", yanchor="top"),
-        margin=dict(t=40, b=150),
+        margin=POSITIVITY_MARGIN_PX,
     )
     # One label per feature: left to itself plotly drops every other one once they crowd
     fig.update_xaxes(showticklabels=True, tickangle=-90, dtick=1, row=2, col=1)
-    fig.update_yaxes(showticklabels=show_sample_labels, title_text="Samples", row=2, col=1)
+    fig.update_yaxes(
+        showticklabels=show_sample_labels, ticks="outside" if show_sample_labels else "",
+        title_text="Samples", row=2, col=1,
+    )
     fig.update_yaxes(title_text="log2 odds ratio", row=1, col=1)
     fig.update_xaxes(showgrid=False, row=2, col=2)
     fig.update_yaxes(showgrid=False, row=2, col=2)

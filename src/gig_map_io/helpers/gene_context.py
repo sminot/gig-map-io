@@ -41,14 +41,24 @@ WITHOUT_BIN_KEY = "Below the dashed line: genomes with the bin's neighbors but n
 BIN_OUTLINE = "#111111"
 
 #: Row height and the arrow's share of it, in inches; the space above the
-#: labels; how tall one character of upright label is per point of font size
-#: (an inch per 72 points, less for a typical glyph); and one footnote line
-ROW_HEIGHT_IN = 0.32
-TOP_PAD_IN = 0.1
-FOOTNOTE_LINE_IN = 0.2
-LABEL_INCH_PER_POINT_CHAR = 0.0085
+#: labels; the room the kb axis takes below the rows; and the footnote's
+#: distance from the bottom edge
+ROW_HEIGHT_IN = 0.22
+TOP_PAD_IN = 0.05
+AXIS_IN = 0.4
+FOOTNOTE_PAD_IN = 0.03
+#: The bin's own line above the rows, in inches: its arrows' height, how far
+#: above it the labels begin, and the room below it
+LABEL_ARROW_IN = 0.16
+LABEL_OFFSET_IN = 0.3
+LABEL_BASE_IN = 0.1
+#: Gap between the row labels and the rows, in inches
+ROW_LABEL_PAD_IN = 0.08
 #: Upright labels are spaced this many font sizes apart
 LABEL_PITCH = 1.3
+#: Genes whose label starts with this go unlabeled when labeling every gene
+#: would shrink the font: they say nothing about what the gene does
+HYPOTHETICAL = "hypothetical protein"
 
 
 def fit_labels(n: int, font_size: float, width_pt: float) -> tuple[float, float]:
@@ -73,31 +83,37 @@ def draw_gene_labels(
     text_offset: float,
     font_size: float,
     arrow_height: float = 0.0,
-) -> None:
+) -> int:
     """
     Gene arrows along a line at ``y`` with each gene's label standing over it:
     labels sit at a fixed spacing (``LABEL_PITCH`` font sizes), centered over
     the genes, each tied to its gene by a leader line, which is what keeps
-    them legible when genes are packed. The font shrinks if the labels would
-    not otherwise fit between ``x0`` and ``x1``.
+    them legible when genes are packed. If the labels would not fit between
+    ``x0`` and ``x1`` at ``font_size``, the hypothetical proteins go
+    unlabeled, and if the rest still do not fit the font shrinks.
 
     ``genes`` has ``start``, ``stop`` and ``label`` columns in the axes' x
     units. ``text_offset`` is how far above the line the labels begin, in
     y units; ``arrow_height`` draws the arrows as filled blocks of that
-    height (in y units) rather than as line arrows.
+    height (in y units) rather than as line arrows. Returns how many genes
+    were left unlabeled.
     """
     genes = genes.sort_values(["start", "label"]).reset_index(drop=True)
     width_pt = ax.get_position().width * ax.figure.get_figwidth() * 72
-    font, pitch_pt = fit_labels(len(genes), font_size, width_pt)
+    labeled = genes
+    if fit_labels(len(genes), font_size, width_pt)[0] < font_size:
+        labeled = genes.loc[~genes["label"].str.startswith(HYPOTHETICAL)]
+    font, pitch_pt = fit_labels(len(labeled), font_size, width_pt)
     pitch = pitch_pt * (x1 - x0) / width_pt
-    block = len(genes) * pitch
+    block = len(labeled) * pitch
     center = (genes[["start", "stop"]].min().min() + genes[["start", "stop"]].max().max()) / 2
     left = min(max(center - block / 2, x0), x1 - block)
-    for i, gene in genes.iterrows():
+    for _, gene in genes.iterrows():
         if arrow_height > 0:
             ax.add_patch(gene_arrow(gene["start"], gene["stop"], y, arrow_height, "#555555", "#333333", 0.6))
         else:
             ax.annotate("", xytext=(gene["start"], y), xy=(gene["stop"], y), arrowprops=dict(arrowstyle="simple"))
+    for i, (_, gene) in enumerate(labeled.iterrows()):
         label_x = left + (i + 0.5) * pitch
         ax.annotate(
             "", xytext=(label_x, y + text_offset), xy=(np.mean([gene["start"], gene["stop"]]), y + text_offset / 5),
@@ -105,6 +121,12 @@ def draw_gene_labels(
         )
         ax.text(label_x, y + text_offset, gene["label"], rotation=90, fontsize=font,
                 horizontalalignment="center", verticalalignment="bottom")
+    return len(genes) - len(labeled)
+
+
+def unlabeled_note(n_unlabeled: int) -> str:
+    """The footnote line for genes ``draw_gene_labels`` left unlabeled."""
+    return f"Unlabeled: {n_unlabeled} hypothetical protein{'s' if n_unlabeled != 1 else ''}."
 
 
 def gene_arrow(start: float, stop: float, y: float, height: float, face, edge, edge_width: float) -> Polygon:
@@ -177,37 +199,12 @@ def plot_gene_context(
     """
     lo, hi = window
     n_rows = len(rows)
-    # The label panel is as tall as its longest label, which stands upright,
-    # at the size the labels will actually be drawn
-    label_font, _ = fit_labels(len(bin_genes), font_size, width * 0.8 * 72)
-    label_height = 0.5 + bin_genes["label"].str.len().max() * label_font * LABEL_INCH_PER_POINT_CHAR
-    rows_height = ROW_HEIGHT_IN * n_rows
-    key = KEY
-    if any(row.get("without_bin") for row in rows):
-        key = f"{WITHOUT_BIN_KEY}\n{key}"
-    if any(row.get("links") for row in rows):
-        key = f"{LINK_KEY}\n{key}"
-    footnote = key if note is None else f"{note}\n{key}"
-    bottom_in = 0.4 + FOOTNOTE_LINE_IN * (footnote.count("\n") + 1)
-    fig_height = TOP_PAD_IN + label_height + rows_height + 0.55 + bottom_in
-    # The left margin holds the longest row label
-    longest = max((len(row["genome"]) for row in rows), default=10)
-    left = min(0.4, 0.02 + longest * (font_size - 1) * 0.0085 / width)
-    fig = plt.figure(figsize=(width, fig_height))
-    gs = fig.add_gridspec(
-        2, 1, height_ratios=[label_height, rows_height + 0.55], hspace=0.02,
-        left=left, right=0.98, top=1 - TOP_PAD_IN / fig_height, bottom=bottom_in / fig_height,
-    )
+    rows_height = ROW_HEIGHT_IN * n_rows + 0.55
+    # The height is a placeholder until the labels are drawn and measured
+    fig = plt.figure(figsize=(width, 1.0))
+    gs = fig.add_gridspec(2, 1, hspace=0, right=0.98)
     top = fig.add_subplot(gs[0])
     main = fig.add_subplot(gs[1], sharex=top)
-
-    # The bin alone, labeled, above the rows
-    draw_gene_labels(
-        top, bin_genes.assign(label=bin_genes["label"]), lo, hi, y=0.0,
-        text_offset=0.08, font_size=font_size, arrow_height=0.06,
-    )
-    top.set_ylim(-0.06, 1.0)
-    top.axis("off")
 
     # Colors by gene: shared genes take a hue in order of position
     everything = pd.concat([row["genes"].assign(row=i) for i, row in enumerate(rows)], ignore_index=True)
@@ -243,7 +240,41 @@ def plot_gene_context(
     main.set_xticks(ticks)
     main.set_xticklabels([f"{(t - lo) / 1000:g}" for t in ticks], fontsize=font_size - 1)
     main.set_xlabel("kb", fontsize=font_size)
-    fig.text(0.98, 0.012, footnote, ha="right", va="bottom", fontsize=font_size - 1, color="#555555")
+
+    # The left margin holds the longest row label, which sets the width the
+    # bin's labels have to fit in
+    renderer = fig.canvas.get_renderer()
+    row_label_in = max(label.get_window_extent(renderer).width for label in main.get_yticklabels()) / fig.dpi
+    gs.update(left=(row_label_in + ROW_LABEL_PAD_IN) / width)
+
+    # The bin alone, labeled, above the rows, its y units inches; the panel
+    # is as tall as the longest label drawn
+    n_unlabeled = draw_gene_labels(
+        top, bin_genes, lo, hi, y=0.0,
+        text_offset=LABEL_OFFSET_IN, font_size=font_size, arrow_height=LABEL_ARROW_IN,
+    )
+    label_in = max(text.get_window_extent(renderer).height for text in top.texts) / fig.dpi
+    top.set_ylim(-LABEL_BASE_IN, LABEL_OFFSET_IN + label_in)
+    top.axis("off")
+    label_height = LABEL_BASE_IN + LABEL_OFFSET_IN + label_in
+
+    key = KEY
+    if any(row.get("without_bin") for row in rows):
+        key = f"{WITHOUT_BIN_KEY}\n{key}"
+    if any(row.get("links") for row in rows):
+        key = f"{LINK_KEY}\n{key}"
+    notes = [note] if note else []
+    if n_unlabeled:
+        notes.append(unlabeled_note(n_unlabeled))
+    footnote = fig.text(
+        0.98, 0, "\n".join(notes + [key]), ha="right", va="bottom", fontsize=font_size - 1, color="#555555",
+    )
+    bottom_in = AXIS_IN + FOOTNOTE_PAD_IN + footnote.get_window_extent(renderer).height / fig.dpi
+    fig_height = TOP_PAD_IN + label_height + rows_height + bottom_in
+    fig.set_figheight(fig_height)
+    footnote.set_y(FOOTNOTE_PAD_IN / fig_height)
+    gs.set_height_ratios([label_height, rows_height])
+    gs.update(top=1 - TOP_PAD_IN / fig_height, bottom=bottom_in / fig_height)
     return fig
 
 

@@ -194,17 +194,18 @@ class ContrastMetagenomesSet(DatasetDict):
         annotation_cols: dict[str, str] | None = None,
         annotation_labels: dict[str, dict] | None = None,
         annotation_orders: dict[str, list] | None = None,
-        width: int = 1000,
-        height: int = 800,
-        rpkm_height_fraction: float = 0.65,
-        annotation_width_fraction: float = 0.15,
+        width: int = 520,
+        height: int | None = None,
+        annotation_width_fraction: float = 0.1,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
         The abundance of a set of bins across samples, log10(RPKM + 1), with
         the Spearman correlation between every pair of bins beneath it and,
         optionally, a column of sample annotations beside it. Samples and
-        bins are each ordered by hierarchical clustering.
+        bins are each ordered by hierarchical clustering. The correlation
+        cells are square, and the height follows the number of bins unless
+        given.
 
         Parameters
         ----------
@@ -220,9 +221,6 @@ class ContrastMetagenomesSet(DatasetDict):
             Order of the (display) values of an annotation column, keyed the
             same way. A two-level column is colored as a contrast, with the
             first level the case-like one.
-        rpkm_height_fraction : float
-            Fraction of the figure height given to the abundance heatmap; the
-            correlation heatmap takes the rest.
         annotation_width_fraction : float
             Fraction of the figure width given to the annotation column.
         """
@@ -246,9 +244,17 @@ class ContrastMetagenomesSet(DatasetDict):
         annotation_orders = annotation_orders or {}
 
         # Row 1: [annotations | abundance], sharing the sample axis;
-        # row 2: [            | correlation], sharing the bin axis with the abundance
+        # row 2: [            | correlation], sharing the bin axis with the abundance.
+        # The correlation panel is as tall as the bin columns are wide, so
+        # that its cells come out square
         rpkm_col = 2 if annotations is not None else 1
-        row_heights = [rpkm_height_fraction, 1.0 - rpkm_height_fraction]
+        longest = max(len(name) for name in sorted_features)
+        margin = dict(l=70, r=110, t=50, b=45 + int(LABEL_CHAR_PX * longest))
+        bins_px = (width - margin["l"] - margin["r"]) * (1.0 - annotation_width_fraction if annotations is not None else 1.0)
+        if height is None:
+            height = int(margin["t"] + margin["b"] + ABUNDANCE_PANEL_PX + HEATMAP_GAP_PX + bins_px)
+        plot_height = height - margin["t"] - margin["b"]
+        row_heights = [(plot_height - HEATMAP_GAP_PX - bins_px) / plot_height, bins_px / plot_height]
         fig = make_subplots(
             rows=2,
             cols=rpkm_col,
@@ -258,7 +264,7 @@ class ContrastMetagenomesSet(DatasetDict):
             column_widths=[annotation_width_fraction, 1.0 - annotation_width_fraction] if annotations is not None else None,
             row_heights=row_heights,
             horizontal_spacing=0.02,
-            vertical_spacing=0.04,
+            vertical_spacing=HEATMAP_GAP_PX / plot_height,
         )
         fig.add_trace(
             go.Heatmap(
@@ -300,12 +306,14 @@ class ContrastMetagenomesSet(DatasetDict):
                 tickmode="array",
                 tickvals=list(range(len(annotations.columns))),
                 ticktext=annotations.columns.tolist(),
-                tickangle=90,
+                tickangle=0,
+                side="top",
+                ticks="",
                 range=[-0.5, len(annotations.columns) - 0.5],
                 showticklabels=True,
                 row=1, col=1,
             )
-            fig.update_yaxes(showticklabels=False, row=1, col=1)
+            fig.update_yaxes(showticklabels=False, ticks="", row=1, col=1)
 
         # The categorical legend runs along the top, leaving the right margin
         # to the two color bars
@@ -314,14 +322,16 @@ class ContrastMetagenomesSet(DatasetDict):
             height=height,
             template=TEMPLATE,
             showlegend=annotations is not None,
-            legend=TOP_LEGEND,
-            margin=dict(t=50),
+            # One row, the annotation column's name leading its entries
+            # rather than stacked above them
+            legend=dict(TOP_LEGEND, traceorder="normal", y=1.04),
+            margin=margin,
         )
         fig.update_yaxes(title_text="Samples", row=1, col=1)
-        fig.update_yaxes(title_text="Pangenome bin", showticklabels=False, row=2, col=rpkm_col)
+        fig.update_yaxes(title_text="Pangenome bin", showticklabels=False, ticks="", row=2, col=rpkm_col)
         fig.update_xaxes(title_text="Pangenome bin", row=2, col=rpkm_col)
-        fig.update_xaxes(showticklabels=False, row=1, col=rpkm_col)
-        fig.update_yaxes(showticklabels=False, row=1, col=rpkm_col)
+        fig.update_xaxes(showticklabels=False, ticks="", row=1, col=rpkm_col)
+        fig.update_yaxes(showticklabels=False, ticks="", row=1, col=rpkm_col)
         save_image(fig, file_prefix)
         return fig
 
@@ -400,8 +410,8 @@ class ContrastMetagenomesSet(DatasetDict):
         sig_thresh: float = FDR_THRESH,
         self_label: str = "self",
         comparator_label: str = "comparator",
-        width: int = 640,
-        height: int = 500,
+        width: int | None = None,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -456,8 +466,8 @@ class ContrastMetagenomesSet(DatasetDict):
         sig_thresh: float = FDR_THRESH,
         self_label: str = "self",
         comparator_label: str = "comparator",
-        width: int = 600,
-        height: int = 540,
+        width: int = 560,
+        height: int = 380,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -483,8 +493,9 @@ class ContrastMetagenomesSet(DatasetDict):
         fig = go.Figure(go.Heatmap(
             z=z.values, x=[names[c] for c in across], y=[names[r] for r in up],
             colorscale="RdBu_r", zmid=0, zmin=-limit, zmax=limit, xgap=2, ygap=2, hoverinfo="skip",
+            # Shorter than the plot, so that its two-line title clears the top tick
             colorbar=dict(
-                title="Observed /<br>expected", thickness=14,
+                title="Observed /<br>expected", thickness=14, len=0.8, y=0.4,
                 tickvals=list(range(-limit, limit + 1)),
                 ticktext=[f"{2 ** v}×" if v >= 0 else f"1/{2 ** -v}×" for v in range(-limit, limit + 1)],
             ),
@@ -501,11 +512,11 @@ class ContrastMetagenomesSet(DatasetDict):
                     font=dict(size=12, color="#ffffff" if dark else "#1a1a1a"),
                 )
         fig.add_annotation(
-            x=0.5, xref="paper", y=0, yref="paper", yshift=-70, xanchor="center", yanchor="top",
+            x=0.5, xref="paper", y=0, yref="paper", yshift=-55, xanchor="center", yanchor="top",
             showarrow=False, font=dict(size=11, color="#555555"), text=subtitle,
         )
         fig.update_layout(
-            template=SIMPLE_TEMPLATE, width=width, height=height, margin=dict(t=30, b=110),
+            template=SIMPLE_TEMPLATE, width=width, height=height, margin=dict(t=30, b=85),
             xaxis=dict(title=self_label, side="bottom", showline=False, ticks=""),
             yaxis=dict(title=comparator_label, showline=False, ticks=""),
         )
@@ -667,7 +678,12 @@ class ContrastMetagenomesSet(DatasetDict):
             width=width,
             height=height,
             template=TEMPLATE,
-            legend=dict(title_text="Organism", x=0.0, y=0.42, xanchor="left", yanchor="top"),
+            # Rows as compact as the single volcano's, which make_subplots does
+            # not carry over, so that every organism fits the empty quadrant
+            legend=dict(
+                title_text="Organism", x=0.0, y=0.42, xanchor="left", yanchor="top",
+                tracegroupgap=0, itemsizing="constant",
+            ),
             margin=dict(t=50),
         )
         # The scatter shares the comparator volcano's vertical axis, so only
@@ -680,6 +696,12 @@ class ContrastMetagenomesSet(DatasetDict):
         save_image(fig, file_prefix)
         return fig
 
+
+#: The abundance heatmap's sample panel and the gap above the correlation
+#: panel, in px, and the width of one character of a bin label at 13 px
+ABUNDANCE_PANEL_PX = 300
+HEATMAP_GAP_PX = 30
+LABEL_CHAR_PX = 6
 
 #: The color scale of the concordance heatmaps runs from 2**-limit to
 #: 2**limit times the expected count

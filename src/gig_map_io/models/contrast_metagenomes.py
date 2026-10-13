@@ -47,6 +47,10 @@ ASSOCIATION_LABELS = dict(
 SIZE_BY_ABUNDANCE = dict(size="mean_abund", size_max=14)
 MIN_MARKER_PX = 4
 
+#: One facet row of an abundance histogram, and the gap between rows
+HISTOGRAM_ROW_PX = 150
+HISTOGRAM_ROW_GAP_PX = 30
+
 #: The columns every association plot shows on hover
 ASSOCIATION_HOVER = ["mean_abund", "log2_fold_change", "Estimate", "pvalue", "qvalue"]
 
@@ -438,8 +442,8 @@ class ContrastMetagenomes(Dataset):
         norm_bin: str | None = None,
         threshold: float = 0.25,
         group_labels: dict | None = None,
-        width: int = 660,
-        height: int = 520,
+        width: int | None = None,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -475,7 +479,7 @@ class ContrastMetagenomes(Dataset):
             y_title="Samples",
             caption=(
                 f"Present at {measured} &#8805; {threshold:g} &#183; n = {result['n']} "
-                f"&#183; odds ratio {result['odds_ratio']:.2f} "
+                f"<br>odds ratio {result['odds_ratio']:.2f} "
                 f"&#183; Fisher's exact p = {format_pvalue(result['pvalue'])}"
             ),
             facet_groups=True,
@@ -491,8 +495,8 @@ class ContrastMetagenomes(Dataset):
         group_labels: dict | None = None,
         group_order: list | None = None,
         x_title: str | None = None,
-        width: int = 500,
-        height: int = 400,
+        width: int = 560,
+        height: int | None = None,
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
@@ -505,6 +509,9 @@ class ContrastMetagenomes(Dataset):
         ``group_labels`` renames the values of the metadata column used for
         ``color`` / ``facet_row`` (say 1 to "BSI"), and ``group_order`` gives
         the order of those display names, the first being the case-like one.
+        The height follows the number of ``facet_row`` rows unless given. A
+        legend that would only repeat the row labels, because ``color`` and
+        ``facet_row`` name the same column, is left out.
         """
         df = self.metadata.assign(
             abundance=(
@@ -521,6 +528,14 @@ class ContrastMetagenomes(Dataset):
             kwargs.setdefault("category_orders", {column: list(group_order) for column in grouping})
             kwargs.setdefault("color_discrete_map", group_colors(group_order))
 
+        rows = df[kwargs["facet_row"]].nunique() if "facet_row" in kwargs else 1
+        legend = kwargs.get("color") is not None and kwargs.get("color") != kwargs.get("facet_row")
+        # The abundance axis title may run to more than one line
+        top, bottom = (70 if legend else 30), 75 + 16 * (x_title or "").count("<br>")
+        if height is None:
+            height = top + bottom + HISTOGRAM_ROW_PX * rows + HISTOGRAM_ROW_GAP_PX * (rows - 1)
+        if rows > 1:
+            kwargs.setdefault("facet_row_spacing", HISTOGRAM_ROW_GAP_PX / (height - top - bottom))
         fig = px.histogram(
             data_frame=df,
             x="abundance",
@@ -547,7 +562,8 @@ class ContrastMetagenomes(Dataset):
             xref="paper", yref="paper", x=0, y=0.5, xshift=-55, textangle=-90,
             showarrow=False, font=dict(size=14),
         )
-        fig.update_layout(margin=dict(l=75, b=75))
-        legend_above(fig)
+        fig.update_layout(margin=dict(l=75, b=bottom, t=top), showlegend=legend)
+        if legend:
+            legend_above(fig)
         save_image(fig, file_prefix)
         return fig

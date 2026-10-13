@@ -26,6 +26,18 @@ ASSOCIATION_COLORS = {
     "Negatively associated": CONTROL_COLOR,
 }
 
+#: Sizing: the two panels and their margins, the width one character of a
+#: category name takes at the template's 13 px, and the bounds on the width;
+#: then the height of one category's bars, the shortest data region, and the
+#: height of a figure that has nothing to draw
+PANELS_PX = 600
+LABEL_CHAR_PX = 6.5
+MIN_WIDTH = 560
+MAX_WIDTH = 1000
+CATEGORY_PX = 26
+MIN_PLOT_PX = 110
+EMPTY_HEIGHT = 140
+
 
 def enrich_organisms(
     foreground: Iterable[tuple],
@@ -91,7 +103,7 @@ def plot_enrichment(
     axis_title: str,
     qvalue_threshold: float,
     order: List[str] | None,
-    width: int,
+    width: int | None,
     height: int | None,
     file_prefix: str | None,
     mark: str = "star",
@@ -109,7 +121,9 @@ def plot_enrichment(
     infinite odds ratio and is drawn at the edge of the observed range.
 
     When ``height`` is ``None`` it follows the number of categories, so that a
-    figure of three terms is not drawn on the same canvas as one of twenty.
+    figure of three terms is not drawn on the same canvas as one of twenty;
+    when ``width`` is ``None`` it follows the longest category name, which
+    the two panels would otherwise have to give up room to.
 
     ``show_legend`` is off for a figure of one set, where a legend would name nothing.
 
@@ -169,16 +183,20 @@ def plot_enrichment(
         upper = float(np.nanmax(df["log2_odds_ratio"])) if df["log2_odds_ratio"].notna().any() else 1.0
         fig.update_xaxes(range=[min(0.0, float(np.nanmin(df["log2_odds_ratio"]))), upper * 1.45], row=1, col=2)
 
+    longest = max((len(str(name)) for name in df[label]), default=0)
+    top = 50 if show_legend else 30
     fig.update_layout(
-        width=width,
-        height=height if height is not None else max(320, 24 * n_categories + 190),
+        width=width if width is not None else int(np.clip(
+            PANELS_PX + LABEL_CHAR_PX * longest, MIN_WIDTH, MAX_WIDTH,
+        )),
+        height=height if height is not None else top + 60 + max(MIN_PLOT_PX, CATEGORY_PX * n_categories),
         template=TEMPLATE,
         barmode="group",
         showlegend=show_legend,
         legend=dict(
             title_text="", orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom",
         ),
-        margin=dict(t=50 if show_legend else 30),
+        margin=dict(t=top),
         # Up to ten bins, a gridline per bin reads as a count; past that the
         # automatic ticks are what is legible
         xaxis=dict(title="Bins in set", dtick=1 if df["n_foreground"].max() <= 10 else None),
@@ -196,7 +214,7 @@ def plot_enrichment(
         )
         fig.update_xaxes(visible=False)
         fig.update_yaxes(visible=False)
-        fig.update_layout(showlegend=False)
+        fig.update_layout(showlegend=False, shapes=[], width=MIN_WIDTH, height=EMPTY_HEIGHT)
 
     save_image(fig, file_prefix)
     return fig

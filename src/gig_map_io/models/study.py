@@ -314,8 +314,8 @@ class Study:
         self,
         enrichment: pd.DataFrame,
         qvalue_threshold: float = 0.2,
-        width: int = 800,
-        height: int = 450,
+        width: int | None = None,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -339,7 +339,7 @@ class Study:
         enrichment: pd.DataFrame,
         qvalue_threshold: float = 0.2,
         max_terms: int = 20,
-        width: int = 900,
+        width: int | None = None,
         height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:

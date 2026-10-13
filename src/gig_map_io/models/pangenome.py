@@ -20,7 +20,7 @@ from ..helpers.clustering import linkage_order
 from ..helpers.save_image import save_image
 from ..helpers.style import PRIMARY, SIMPLE_TEMPLATE, TEMPLATE
 from ..helpers.coords import Coords
-from ..helpers.gene_context import draw_gene_labels, order_rows, plot_gene_context
+from ..helpers.gene_context import draw_gene_labels, order_rows, plot_gene_context, unlabeled_note
 from ..helpers.genomes import genbank_duplicates
 from .dataset import Dataset
 from ..helpers.phylogeny import Phylogeny
@@ -52,6 +52,13 @@ MEMBERSHIP_METRICS = {
 #: allowance for small indels and a share of the bin's span
 PIECE_TOLERANCE_BP = 2000
 PIECE_TOLERANCE_FRACTION = 0.05
+
+#: The widest a gene or context map is drawn, in inches: a full-width cell of
+#: a 170 mm figure, so that a map drawn at the printed font size places 1:1
+MAP_MAX_WIDTH_IN = 6.5
+#: A gene map's width per gene drawn, and what it needs besides, in inches
+GENE_MAP_IN_PER_GENE = 0.2
+GENE_MAP_BASE_IN = 0.6
 
 
 def _largest_cluster(genes: pd.DataFrame, max_gap: int) -> pd.DataFrame:
@@ -698,26 +705,37 @@ class Pangenome(Dataset):
     def bin_gene_map(
         self,
         bin: str,
-        width: int = 5,
-        height: int = 5,
+        width: float | None = None,
+        height: float = 1.0,
+        max_gap: int = 20000,
         remove_gene_id = True,
         remove_org_tag = True,
         text_offset = 0.025,
-        font_size: float = 10.0,
+        font_size: float = 7.0,
         file_prefix: str | None = None
-    ) -> go.Figure:
+    ) -> plt.Figure:
         """
         Map of genes in a bin.
 
         ``width`` and ``height`` are in inches, and set the span of the arrows;
-        the labels standing over them extend the drawing above that. A panel
-        meant for print is drawn at its printed width with ``font_size`` at
-        the printed point size.
+        the labels standing over them extend the drawing above that. The
+        width defaults to ``GENE_MAP_IN_PER_GENE`` per gene drawn plus
+        ``GENE_MAP_BASE_IN``, at most ``MAP_MAX_WIDTH_IN``, so that with
+        ``font_size`` at the printed point size the map places into a figure
+        unscaled.
+
+        A bin's genes need not sit together: the map covers the largest run
+        of them with no gap over ``max_gap`` bp, as the context map's window
+        does, and a footnote says how many lie elsewhere. With a
+        ``file_prefix`` the coordinates of the genes drawn are also written
+        as CSV.
         """
 
         # Get a DataFrame with the gene coordinates
         # inferred from all of the genome alignments
         coords, group_offset = self._get_gene_coords(bin)
+        n_genes = len(coords)
+        coords = _largest_cluster(coords, max_gap)
 
         # Customize the names
         coords = coords.assign(
@@ -736,35 +754,38 @@ class Pangenome(Dataset):
             stop_x=lambda d: (d['stop'] - min_x) / span_x
         )
 
+        if width is None:
+            width = min(MAP_MAX_WIDTH_IN, GENE_MAP_IN_PER_GENE * len(coords) + GENE_MAP_BASE_IN)
         fig, ax = plt.subplots(figsize=(width, height))
-        draw_gene_labels(
+        fig.subplots_adjust(left=0, right=1)
+        n_unlabeled = draw_gene_labels(
             ax, coords[["start_x", "stop_x", "label"]].rename(columns={"start_x": "start", "stop_x": "stop"}),
             x0=0.0, x1=1.0, y=0.0, text_offset=text_offset, font_size=font_size,
             arrow_height=text_offset / 2,
         )
         ax.set_xlim(0, 1)
-        # Room for the size bar below the genes and the start of the labels above
-        ax.set_ylim(-1.6 * text_offset, 1.2 * text_offset)
+        # Room for the size label below the genes and the start of the labels above
+        ax.set_ylim(-1.05 * text_offset, 1.2 * text_offset)
 
         # The vertial lines work with an increment scaled to the text offset
         vertical_increment = text_offset / 10.
 
         # Draw a line to indicate each of the group offsets
         # It should be styled as a small vertical red line
-        for offset_x in (group_offset / span_x).values:
-            if offset_x > 0:
+        for offset_x in ((group_offset - min_x) / span_x).values:
+            if 0 < offset_x < 1:
                 ax.annotate(
                     '',
                     xytext=(offset_x, 0),
-                    xy=(offset_x, -4 * vertical_increment),
+                    xy=(offset_x, -6 * vertical_increment),
                     arrowprops=dict(arrowstyle="-", color="red")
                 )
 
         # Draw a line underneath the entire gene map
         ax.annotate(
             '',
-            xytext=(0, -2 * vertical_increment),
-            xy=(1, -2 * vertical_increment),
+            xytext=(0, -4 * vertical_increment),
+            xy=(1, -4 * vertical_increment),
             arrowprops=dict(arrowstyle="|-|")
         )
 
@@ -783,6 +804,14 @@ class Pangenome(Dataset):
             horizontalalignment='center',
             verticalalignment='bottom'
         )
+        notes = []
+        if len(coords) < n_genes:
+            notes.append(f"{n_genes - len(coords)} of the bin's {n_genes} genes lie outside this map.")
+        if n_unlabeled:
+            notes.append(unlabeled_note(n_unlabeled))
+        if notes:
+            ax.text(0.5, -1.1 * text_offset, "\n".join(notes), fontsize=font_size - 1, color="#555555",
+                    horizontalalignment="center", verticalalignment="top")
 
         ax.axis("off")
 
@@ -803,8 +832,8 @@ class Pangenome(Dataset):
         min_bin_fraction: float = 0.5,
         max_without_bin: float = 1 / 3,
         min_flank_fraction: float = 0.5,
-        width: float = 9.0,
-        font_size: float = 8.0,
+        width: float = MAP_MAX_WIDTH_IN,
+        font_size: float = 7.0,
         remove_gene_id: bool = True,
         remove_org_tag: bool = True,
         genome_names: Dict[str, str] | None = None,
@@ -1140,10 +1169,10 @@ class Pangenome(Dataset):
     def bin_presence_heatmap(
         self,
         bins: str | List[str],
-        width: int = 500,
-        height: int = 400,
-        tree_proportion: float = 0.5,
-        horizontal_spacing: float = 0.,
+        width: int = 520,
+        height: int = 640,
+        tree_proportion: float = 0.9,
+        horizontal_spacing: float = 0.04,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
@@ -1175,6 +1204,8 @@ class Pangenome(Dataset):
         tree.plot_lines(fig, row=1, col=1)
         tree.plot_points(fig, mode="markers", row=1, col=1)
         fig.update_xaxes(title_text="ANI distance", row=1, col=1)
+        # Above the strip, the bin names stay clear of the tree's last tick
+        fig.update_xaxes(side="top", row=1, col=2)
         fig.add_heatmap(
             z=df.values,
             x=df.columns.values,
@@ -1190,7 +1221,8 @@ class Pangenome(Dataset):
             template=SIMPLE_TEMPLATE,
             margin=dict(r=20),
         )
-        fig.update_yaxes(visible=False)
+        # Leaves sit at 0 .. n - 1; autorange would pad past them
+        fig.update_yaxes(visible=False, range=[-0.5, df.shape[0] - 0.5])
         save_image(fig, file_prefix)
         return fig
 

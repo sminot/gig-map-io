@@ -28,6 +28,18 @@ EXPECTED_COLOR = "#c3cedb"
 #: Height of one line of caption beneath the plot
 CAPTION_LINE_PX = 18
 
+#: Width given to each tick's pair of bars, along one axis and in a faceted
+#: row, which holds fewer pairs and so can give each one more room
+IN_LINE_TICK_PX = 58
+FACETED_TICK_PX = 110
+#: Height of the data region along one axis, and of each faceted row
+IN_LINE_PLOT_PX = 300
+FACETED_ROW_PX = 110
+#: Gap between faceted rows, which holds the label of the row below it
+ROW_GAP_PX = 34
+#: Room for the legend above the plot and the caption beneath it
+MIN_WIDTH = 420
+
 #: Below this expected count a fold change says more about rounding than about
 #: the data, and the chi-squared approximation is unreliable
 MIN_EXPECTED_TO_LABEL = 5
@@ -82,8 +94,8 @@ def plot_observed_expected(
     y_title: str,
     caption: str | None = None,
     facet_groups: bool = False,
-    width: int = 800,
-    height: int = 500,
+    width: int | None = None,
+    height: int | None = None,
     file_prefix: str | None = None,
 ) -> go.Figure:
     """
@@ -99,6 +111,9 @@ def plot_observed_expected(
     ``MIN_EXPECTED_TO_LABEL``. Like every figure here it has no title; the
     test result and anything else a reader needs go in ``caption``, which may
     run to several lines (``<br>``) beneath the plot.
+
+    The size follows the number of ticks and rows unless ``width`` and
+    ``height`` are given.
     """
     if not (len(ticks) == len(groups) == len(observed) == len(expected)):
         raise ValueError("ticks, groups, observed and expected must be the same length")
@@ -132,14 +147,23 @@ def _label_fold_change(fig: go.Figure, x, observed: float, expected: float, row:
 
 def _finish(
     fig: go.Figure, y_title: str, caption: str | None,
-    width: int, height: int, margin: dict, y_title_shift: int, caption_shift: int,
+    width: int | None, height: int | None, plot_width: int, plot_height: int,
+    margin: dict, y_title_shift: int, caption_shift: int,
 ) -> None:
-    """The legend, margins, one y-axis title for every panel, and the caption."""
+    """
+    The size, legend, margins, one y-axis title for every panel, and the
+    caption. ``plot_width`` and ``plot_height`` size the data region when
+    ``width`` or ``height`` is not given.
+    """
     caption_lines = caption.count("<br>") + 1 if caption else 0
+    margin = dict(margin, t=margin.get("t", 50), b=margin["b"] + CAPTION_LINE_PX * caption_lines)
     fig.update_layout(
-        template=TEMPLATE, width=width, height=height,
-        legend=TOP_LEGEND,
-        margin=dict(margin, t=50, b=margin["b"] + CAPTION_LINE_PX * caption_lines),
+        template=TEMPLATE,
+        width=width or max(MIN_WIDTH, margin["l"] + margin["r"] + plot_width),
+        height=height or margin["t"] + margin["b"] + plot_height,
+        # Hung from the top of the canvas, clear of the label over the first row
+        legend=dict(TOP_LEGEND, yref="container", y=1.0, yanchor="top"),
+        margin=margin,
     )
     fig.update_xaxes(tickfont=dict(size=13))
     # Drawn as an annotation so that it spans every panel; sized and colored
@@ -165,7 +189,7 @@ def _plot_in_line(ticks, groups, observed, expected, y_title, caption, width, he
     rows = 2 if axis_break else 1
     fig = make_subplots(
         rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04,
-        row_heights=[0.32, 0.68] if axis_break else [1.0],
+        row_heights=[0.24, 0.76] if axis_break else [1.0],
     )
     for row in range(1, rows + 1):
         _add_pair(fig, positions, observed, expected, row, showlegend=(row == 1))
@@ -214,14 +238,15 @@ def _plot_in_line(ticks, groups, observed, expected, y_title, caption, width, he
     fig.update_yaxes(title_text="", row=rows, col=1)
     _finish(
         fig, y_title, caption, width, height,
-        margin=dict(b=100, l=85), y_title_shift=-68, caption_shift=-82,
+        plot_width=IN_LINE_TICK_PX * len(ticks), plot_height=IN_LINE_PLOT_PX,
+        margin=dict(b=100, l=85, r=30), y_title_shift=-68, caption_shift=-82,
     )
     return fig
 
 
 def _plot_faceted(ticks, groups, observed, expected, y_title, caption, width, height) -> go.Figure:
     """
-    One row per group, labeled in the right margin.
+    One row per group, each labeled above it.
 
     The rows share a y axis so that a bar in one row can be read against a bar
     in another, which is the comparison a contingency table is for. No axis
@@ -231,7 +256,8 @@ def _plot_faceted(ticks, groups, observed, expected, y_title, caption, width, he
     order = list(dict.fromkeys(groups))
     ceiling = max(observed + expected) * 1.22
     fig = make_subplots(
-        rows=len(order), cols=1, shared_xaxes=True, shared_yaxes=True, vertical_spacing=0.08,
+        rows=len(order), cols=1, shared_xaxes=True, shared_yaxes=True,
+        vertical_spacing=ROW_GAP_PX / (len(order) * FACETED_ROW_PX + (len(order) - 1) * ROW_GAP_PX),
     )
     for row, group in enumerate(order, start=1):
         members = [i for i, g in enumerate(groups) if g == group]
@@ -243,19 +269,27 @@ def _plot_faceted(ticks, groups, observed, expected, y_title, caption, width, he
         for position, i in enumerate(members):
             _label_fold_change(fig, position, observed[i], expected[i], row)
 
-        # Row label in the margin, in plotly's own facet style. Anchored to
-        # this row's own axis domain rather than to the figure, so that it
-        # tracks the row wherever the layout puts it.
+        # Row label above the row, set level: turned on end beside the row
+        # it runs longer than the row once the panel is drawn small for
+        # print. Anchored to this row's own axis domain rather than to the
+        # figure, so that it tracks the row wherever the layout puts it.
         axis = "y" if row == 1 else f"y{row}"
         fig.add_annotation(
-            x=1.0, xref="paper", xshift=16, y=0.5, yref=f"{axis} domain",
-            text=f"<b>{group}</b>", showarrow=False, textangle=90,
-            xanchor="left", yanchor="middle", font=dict(size=11, color="#333333"),
+            x=0, xref="paper", y=1.0, yref=f"{axis} domain", yshift=2,
+            text=f"<b>{group}</b>", showarrow=False,
+            xanchor="left", yanchor="bottom", font=dict(size=11, color="#333333"),
         )
 
     fig.update_layout(barmode="group", bargap=0.42, bargroupgap=0.05)
+    fig.update_yaxes(nticks=4)
+    # Tick marks only under the last row; elsewhere they reach into the label below
+    fig.update_xaxes(ticks="")
+    fig.update_xaxes(ticks="outside", row=len(order), col=1)
+    widest_row = max(groups.count(group) for group in order)
     _finish(
         fig, y_title, caption, width, height,
-        margin=dict(b=55, l=85, r=98), y_title_shift=-58, caption_shift=-40,
+        plot_width=FACETED_TICK_PX * widest_row,
+        plot_height=len(order) * FACETED_ROW_PX + (len(order) - 1) * ROW_GAP_PX,
+        margin=dict(b=55, l=72, r=20, t=50 + ROW_GAP_PX), y_title_shift=-58, caption_shift=-40,
     )
     return fig

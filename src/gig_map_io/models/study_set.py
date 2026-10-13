@@ -34,6 +34,28 @@ from .study import Study
 #: Sample groups every study in a set is expected to define.
 REQUIRED_SAMPLE_GROUPS = ("study", "cohort", "disease", "participant")
 
+#: Bars grouped by organism: the width of one study's bar, the narrowest group
+#: that keeps the tilted organism labels apart, and the data region's height
+STUDY_BAR_PX = 14
+MIN_ORGANISM_GROUP_PX = 56
+ORGANISM_BARS_PLOT_PX = 270
+
+#: Side of a t-SNE ordination's square data region at its smallest, and the
+#: room its legend takes beside it
+MIN_TSNE_SIDE_PX = 400
+TSNE_LEGEND_PX = 130
+
+#: One community type's group of bars, and one cohort's row, in the
+#: composition figure
+CLUSTER_GROUP_PX = 26
+COMPOSITION_ROW_PX = 90
+
+#: One bin's row in the abundance box plots, the gap between rows, and the
+#: shortest row that still fits the axis title beside it
+BOXPLOT_ROW_PX = 100
+BOXPLOT_ROW_GAP_PX = 28
+MIN_BOXPLOT_PLOT_PX = 170
+
 
 class StudySet:
     """
@@ -266,7 +288,7 @@ class StudySet:
         results: Dict[str, pd.DataFrame],
         metric: str = "r_squared",
         width: int = 760,
-        height: int = 360,
+        height: int = 320,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -305,7 +327,7 @@ class StudySet:
         fig.update_yaxes(matches=None, showticklabels=True)
         fig.update_xaxes(title_text="")
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1].title()))
-        fig.update_layout(margin=dict(t=90))
+        fig.update_layout(margin=dict(t=70, b=40))
         legend_above(fig)
         save_image(fig, file_prefix)
         return fig
@@ -339,8 +361,8 @@ class StudySet:
     def cluster_disease_contingency(
         self,
         clusters: Dict[str, pd.DataFrame],
-        width: int = 950,
-        height: int = 460,
+        width: int | None = None,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -384,16 +406,24 @@ class StudySet:
         study_order: List[str],
         labels: dict,
         hover_data: dict,
-        width: int,
-        height: int,
+        width: int | None,
+        height: int | None,
         footnote: str | None = None,
         **bar_kwargs,
     ) -> go.Figure:
         """
         One group of bars per organism, one bar per study, in the fixed
         organism order and study colors, with a legend above and an optional
-        footnote below the tilted organism labels.
+        footnote below the tilted organism labels. The width follows the
+        number of bars unless given.
         """
+        bottom = 130 if footnote else 80
+        if width is None:
+            width = 100 + summary["organism"].nunique() * max(
+                MIN_ORGANISM_GROUP_PX, STUDY_BAR_PX * len(study_order) + 20
+            )
+        if height is None:
+            height = 60 + bottom + ORGANISM_BARS_PLOT_PX
         fig = px.bar(
             data_frame=summary,
             x="organism",
@@ -413,7 +443,7 @@ class StudySet:
         fig.update_layout(
             bargroupgap=0.05,
             legend=TOP_LEGEND,
-            margin=dict(t=60, b=130 if footnote else 80),
+            margin=dict(t=60, b=bottom),
         )
         if footnote:
             fig.add_annotation(
@@ -425,7 +455,7 @@ class StudySet:
     def cluster_tsne_plot(
         self,
         clusters: pd.DataFrame,
-        width: int = 600,
+        width: int | None = None,
         height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
@@ -433,12 +463,16 @@ class StudySet:
         t-SNE ordination of one organism's samples, colored by community type.
 
         There can be more community types than the standard palette has
-        colors, so a larger one is used here and nowhere else, and the
-        height grows with the legend unless given.
+        colors, so a larger one is used here and nowhere else. The data
+        region is square and grows with the legend unless a size is given.
         """
         order = _sorted_clusters(clusters["cluster"])
+        # Square, and tall enough for the legend down its right side
+        side = max(MIN_TSNE_SIDE_PX, 20 * len(order) + 40)
+        if width is None:
+            width = 100 + side + TSNE_LEGEND_PX
         if height is None:
-            height = max(500, 20 * len(order) + 160)
+            height = 100 + side
         fig = px.scatter(
             data_frame=clusters,
             x="t-SNE 1",
@@ -460,14 +494,14 @@ class StudySet:
     def cluster_composition_bars(
         self,
         clusters: pd.DataFrame,
-        width: int = 650,
+        width: int | None = None,
         height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
         Percentage of each cohort's cases and controls falling in each
-        community type, one row per cohort. The height follows the number of
-        cohorts unless given.
+        community type, one row per cohort. The width follows the number of
+        community types and the height the number of cohorts unless given.
         """
         composition = (
             clusters
@@ -480,6 +514,12 @@ class StudySet:
             .reset_index()
         )
         studies = [study for study in self.study_order if study in set(composition["study"])]
+        order = _sorted_clusters(clusters["cluster"])
+        # Numbered under one axis title rather than "Cluster 10" turned on end
+        number = {name: name.split(" ")[1] for name in order}
+        composition["cluster"] = composition["cluster"].map(number)
+        rows_px = COMPOSITION_ROW_PX * len(studies)
+        gap_px = 30
         fig = px.bar(
             data_frame=composition,
             x="cluster",
@@ -488,22 +528,28 @@ class StudySet:
             color_discrete_map=group_colors(self.disease_order),
             facet_col="study",
             facet_col_wrap=1,
-            facet_row_spacing=0.06,
+            facet_row_spacing=gap_px / (rows_px + gap_px * (len(studies) - 1)),
             barmode="group",
             template=TEMPLATE,
             category_orders={
                 "study": studies,
-                "cluster": _sorted_clusters(clusters["cluster"]),
+                "cluster": [number[name] for name in order],
                 "disease": self.disease_order,
             },
-            labels={"value": "% of samples", "cluster": "", "disease": "Disease"},
-            width=width,
-            height=height if height is not None else 120 * len(studies) + 130,
+            labels={"value": "% of samples", "cluster": "Community type", "disease": "Disease"},
+            width=width if width is not None else 100 + max(460, CLUSTER_GROUP_PX * len(order)),
+            height=height if height is not None else rows_px + gap_px * (len(studies) - 1) + 80 + 60,
         )
         fig.update_yaxes(matches=None)
-        fig.update_xaxes(tickangle=-90)
+        fig.update_xaxes(tickangle=0)
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
-        fig.update_layout(margin=dict(t=80))
+        # One axis title for the column of facets, not one per row
+        fig.update_yaxes(title_text="")
+        fig.add_annotation(
+            text="% of samples", x=0, xref="paper", y=0.5, yref="paper",
+            xshift=-55, textangle=-90, showarrow=False, font=dict(size=14),
+        )
+        fig.update_layout(margin=dict(t=80, b=60, l=75))
         legend_above(fig)
         save_image(fig, file_prefix)
         return fig
@@ -542,6 +588,8 @@ class StudySet:
                 }))
 
         n_bins = len(index)
+        rows_px = max(MIN_BOXPLOT_PLOT_PX, BOXPLOT_ROW_PX * n_bins + BOXPLOT_ROW_GAP_PX * (n_bins - 1))
+        top, bottom = 80, 95
         fig = px.box(
             data_frame=pd.concat(panels),
             x="Cohort",
@@ -552,11 +600,11 @@ class StudySet:
             log_y=True,
             facet_col="Feature",
             facet_col_wrap=1,
-            facet_row_spacing=min(0.05, 0.6 / max(n_bins, 1)),
+            facet_row_spacing=BOXPLOT_ROW_GAP_PX / rows_px,
             category_orders={"Cohort": self.cohort_order, "Group": self.disease_order},
-            labels={"Proportion": "Proportion of genomes", "Group": ""},
+            labels={"Proportion": "Proportion of genomes", "Group": "", "Cohort": ""},
             width=width,
-            height=height if height is not None else 150 * n_bins + 160,
+            height=height if height is not None else top + bottom + rows_px,
             range_y=(floor, 1),
         )
         fig.update_traces(marker=dict(size=3, opacity=0.6), line_width=1)
@@ -573,7 +621,7 @@ class StudySet:
             text="Proportion of genomes", x=0, xref="paper", y=0.5, yref="paper",
             xshift=-68, textangle=-90, showarrow=False, font=dict(size=14),
         )
-        fig.update_layout(margin=dict(t=80, l=85))
+        fig.update_layout(margin=dict(t=top, b=bottom, l=85))
         legend_above(fig)
         save_image(fig, file_prefix)
         return fig
@@ -699,8 +747,8 @@ class StudySet:
     def plot_classifier_performance(
         self,
         replicates: pd.DataFrame,
-        width: int = 1000,
-        height: int = 520,
+        width: int | None = None,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """ROC-AUC per organism and study, with the spread across replicates."""
@@ -729,8 +777,8 @@ class StudySet:
         shap: pd.DataFrame,
         organism: str,
         n_labelled: int = 5,
-        width: int = 650,
-        height: int = 560,
+        width: int = 540,
+        height: int = 520,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -738,16 +786,11 @@ class StudySet:
         other. Bins near the diagonal carry signal in both.
         """
         df = shap.loc[shap["organism"] == organism].sort_values(["combined", "bin"], ascending=[False, True])
-        fig, x_label, y_label, _ = self._shap_scatter(
+        fig, x_label, y_label, limit = self._shap_scatter(
             df, width=width, height=height,
         )
         fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, color=PRIMARY))
-        top = df.head(n_labelled)
-        fig.add_trace(go.Scatter(
-            x=top[x_label], y=top[y_label], mode="text", text=top["bin"],
-            textposition="top right", textfont=dict(size=11),
-            showlegend=False, hoverinfo="skip",
-        ))
+        _label_top_bins(fig, df.head(n_labelled), x_label, y_label, limit, lambda row: row["bin"])
         save_image(fig, file_prefix)
         return fig
 
@@ -780,6 +823,8 @@ class StudySet:
         )
         fig.add_shape(type="line", x0=0, y0=0, x1=limit, y1=limit,
                       line=dict(color="#b0b0b0", dash="dash", width=1))
+        # No title or legend above, so the top margin only clears the last tick
+        fig.update_layout(margin=dict(t=20))
         return fig, x_label, y_label, limit
 
     def plot_shap_comparison_all(
@@ -787,7 +832,7 @@ class StudySet:
         shap: pd.DataFrame,
         n_labelled: int = 8,
         width: int = 720,
-        height: int = 600,
+        height: int = 560,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -804,21 +849,10 @@ class StudySet:
             hover_data={"combined": ":.4f", "organism": True},
         )
         fig.update_traces(marker=dict(size=6, opacity=DENSE_MARKER_OPACITY, line_width=0))
-        # The named bins crowd the lower-left corner, so each label is set
-        # out to the right, spaced evenly down the empty side of the plot,
-        # and tied back to its point with an arrow
-        top = df.head(n_labelled).reset_index(drop=True)
-        top = top.sort_values(y_label, ascending=False).reset_index(drop=True)
-        for i, row in top.iterrows():
-            fig.add_annotation(
-                x=row[x_label], y=row[y_label],
-                ax=limit * 0.55,
-                ay=limit * (0.95 - 0.5 * i / max(len(top) - 1, 1)),
-                axref="x", ayref="y",
-                text=f"{row['organism']} {row['bin']}",
-                showarrow=True, arrowhead=2, arrowwidth=1, arrowcolor="#444444",
-                font=dict(size=11), bgcolor="rgba(255,255,255,0.85)", xanchor="left",
-            )
+        _label_top_bins(
+            fig, df.head(n_labelled), x_label, y_label, limit,
+            lambda row: f"{row['organism']} {row['bin']}",
+        )
         save_image(fig, file_prefix)
         return fig
 
@@ -848,7 +882,7 @@ class StudySet:
         self,
         enrichment: pd.DataFrame,
         qvalue_threshold: float = 0.2,
-        width: int = 800,
+        width: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """The output of :meth:`importance_enrichment`, drawn like the association enrichment."""
@@ -866,8 +900,8 @@ class StudySet:
     def plot_interaction_share(
         self,
         interactions: pd.DataFrame,
-        width: int = 900,
-        height: int = 460,
+        width: int | None = None,
+        height: int | None = None,
         file_prefix: str | None = None,
     ) -> go.Figure:
         """
@@ -903,7 +937,7 @@ class StudySet:
         fig = self._organism_study_bars(
             summary, y="share", study_order=[study.label for study in self.studies],
             labels={
-                "share": "Share of attribution from bin interactions",
+                "share": "Share of attribution<br>from bin interactions",
                 "strongest_over_main": "Strongest pair / strongest main effect",
                 "strongest_pair": "Strongest pair",
             },
@@ -911,10 +945,30 @@ class StudySet:
             footnote=f"Attribution among each model's {n_top} most important bins, split into main effects and pairwise interactions",
             width=width, height=height,
         )
-        fig.update_yaxes(range=[0, min(1.0, summary["share"].max() * 1.3)], tickformat=".0%")
+        fig.update_yaxes(range=[0, min(1.0, summary["share"].max() * 1.1)], tickformat=".0%")
         save_image(fig, file_prefix)
         return fig
 
+
+
+def _label_top_bins(fig: go.Figure, top: pd.DataFrame, x_label: str, y_label: str, limit: float, text) -> None:
+    """
+    Name the bins in ``top`` on a SHAP scatter. The named bins crowd the
+    lower-left corner, so each label is set out to the right, spaced evenly
+    down the empty side of the plot, and tied back to its point with an
+    arrow.
+    """
+    top = top.sort_values([y_label, x_label], ascending=False).reset_index(drop=True)
+    for i, row in top.iterrows():
+        fig.add_annotation(
+            x=row[x_label], y=row[y_label],
+            ax=limit * 0.55,
+            ay=limit * (0.95 - 0.5 * i / max(len(top) - 1, 1)),
+            axref="x", ayref="y",
+            text=text(row),
+            showarrow=True, arrowhead=2, arrowwidth=1, arrowcolor="#444444",
+            font=dict(size=11), bgcolor="rgba(255,255,255,0.85)", xanchor="left",
+        )
 
 
 def _significance_stars(p_value: float) -> str:

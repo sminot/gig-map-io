@@ -191,7 +191,11 @@ gene identity so that conserved synteny shows as columns of matching color,
 with the bin's genes outlined. The genomes whose contigs span most of the
 window are shown, a GenBank copy of a RefSeq assembly is dropped, and rows are
 ordered by clustering on the genes they carry. Both use `helpers.coords.Coords`
-to build the shared coordinate space.
+to build the shared coordinate space, and both cover the largest run of the
+bin's genes with no gap over `max_gap` bp, saying in a footnote how many lie
+elsewhere. They are drawn at print size, 7 pt text and at most 6.5 in wide (a
+gene map 0.2 in per gene plus 0.6 in by default), and when the labels would
+not fit at that size the hypothetical proteins go unlabeled.
 
 ## Genome names
 
