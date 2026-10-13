@@ -708,6 +708,7 @@ class Pangenome(Dataset):
         width: float | None = None,
         height: float = 1.0,
         max_gap: int = 20000,
+        min_bin_fraction: float = 0.5,
         remove_gene_id = True,
         remove_org_tag = True,
         text_offset = 0.025,
@@ -724,18 +725,13 @@ class Pangenome(Dataset):
         ``font_size`` at the printed point size the map places into a figure
         unscaled.
 
-        A bin's genes need not sit together: the map covers the largest run
-        of them with no gap over ``max_gap`` bp, as the context map's window
-        does, and a footnote says how many lie elsewhere. With a
-        ``file_prefix`` the coordinates of the genes drawn are also written
-        as CSV.
+        The genes are those of the context map's window, placed as it places
+        them (``_bin_window``), and a footnote says how many of the bin's
+        genes lie elsewhere. With a ``file_prefix`` the coordinates of the
+        genes drawn are also written as CSV.
         """
-
-        # Get a DataFrame with the gene coordinates
-        # inferred from all of the genome alignments
-        coords, group_offset = self._get_gene_coords(bin)
-        n_genes = len(coords)
-        coords = _largest_cluster(coords, max_gap)
+        n_genes = int(self.bin_size[bin])
+        *_, coords = self._bin_window(bin, max_gap, min_bin_fraction)
 
         # Customize the names
         coords = coords.assign(
@@ -769,17 +765,6 @@ class Pangenome(Dataset):
 
         # The vertial lines work with an increment scaled to the text offset
         vertical_increment = text_offset / 10.
-
-        # Draw a line to indicate each of the group offsets
-        # It should be styled as a small vertical red line
-        for offset_x in ((group_offset - min_x) / span_x).values:
-            if 0 < offset_x < 1:
-                ax.annotate(
-                    '',
-                    xytext=(offset_x, 0),
-                    xy=(offset_x, -6 * vertical_increment),
-                    arrowprops=dict(arrowstyle="-", color="red")
-                )
 
         # Draw a line underneath the entire gene map
         ax.annotate(
@@ -871,27 +856,17 @@ class Pangenome(Dataset):
         them, and the row is drawn broken where the bin would sit.
 
         A bin's genes need not sit together: the window covers the largest
-        run of them with no gap over ``max_gap`` bp, and the footnote says how
-        many lie elsewhere. ``genome_names`` labels the rows (keyed by the
+        run of them with no gap over ``max_gap`` bp (``_bin_window``, shared
+        with the gene map), and the footnote says how many lie elsewhere.
+        ``genome_names`` labels the rows (keyed by the
         genome's file name, as in ``helpers.ncbi.genome_names``); a genome
         it does not name is labeled by its accession.
         """
         aln = self.align_genomes
-        in_bin = aln.loc[aln["bin"] == bin].drop_duplicates(["sseqid", "qseqid", "genome"])
         n_bin_genes = int(self.bin_size[bin])
-        per_contig = in_bin.groupby(["genome", "qseqid"])["sseqid"].nunique()
-        carrying = per_contig.loc[per_contig >= max(2, min_bin_fraction * n_bin_genes)]
-        if carrying.empty:
-            raise ValueError(f"No contig carries {min_bin_fraction:.0%} of {bin}")
-        duplicates = genbank_duplicates(carrying.index.get_level_values("genome"))
-        carrying = carrying.loc[~carrying.index.get_level_values("genome").isin(duplicates)]
-
-        placed = Coords(in_bin.set_index(["genome", "qseqid"]).loc[carrying.index].reset_index())
-        bin_coords = placed.to_df()
-        consensus = bin_coords.set_index("gene")
-        clustered = _largest_cluster(bin_coords, max_gap)
-        n_elsewhere = len(bin_coords) - len(clustered)
-        bin_coords = clustered
+        in_bin, carrying, placed, bin_coords = self._bin_window(bin, max_gap, min_bin_fraction)
+        consensus = placed.to_df().set_index("gene")
+        n_elsewhere = n_bin_genes - len(bin_coords)
         bin_lo = float(min(bin_coords["start"].min(), bin_coords["stop"].min()))
         bin_hi = float(max(bin_coords["start"].max(), bin_coords["stop"].max()))
         window = (bin_lo - flank, bin_hi + flank)
@@ -1118,38 +1093,32 @@ class Pangenome(Dataset):
             "segments": segments,
         }
 
-    def _get_gene_coords(self, bin: str) -> pd.DataFrame:
+    def _bin_window(self, bin: str, max_gap: int, min_bin_fraction: float):
         """
-        Get the coordinates for every gene across every genome
-        Filter to just the genes in this bin
+        The bin's genes in one coordinate space, and the stretch of them that
+        the gene map and the context map both draw.
+
+        The contigs carrying at least ``min_bin_fraction`` of the bin's genes,
+        less the GenBank copy of any assembly also present as RefSeq, are
+        placed together; the window is the largest run of the genes they
+        place with no gap over ``max_gap`` bp. A gene on none of those
+        contigs lies outside it, as do the genes of every other run.
+
+        Returns the bin's alignments, one per gene and contig; the gene count
+        of each carrying contig; the ``Coords`` placing them; and the genes in
+        the window with their coordinates.
         """
-        aln = self.align_genomes.query(f"bin == '{bin}'")
-        output = []
-        while len(aln) > 0:
-            output.append(Coords(aln).to_df())
-            if len(output[-1]) == 0:
-                break
-            aln = aln.loc[~aln['sseqid'].isin(output[-1]['gene'])]
+        aln = self.align_genomes
+        in_bin = aln.loc[aln["bin"] == bin].drop_duplicates(["sseqid", "qseqid", "genome"])
+        per_contig = in_bin.groupby(["genome", "qseqid"])["sseqid"].nunique()
+        carrying = per_contig.loc[per_contig >= max(2, min_bin_fraction * int(self.bin_size[bin]))]
+        if carrying.empty:
+            raise ValueError(f"No contig carries {min_bin_fraction:.0%} of {bin}")
+        duplicates = genbank_duplicates(carrying.index.get_level_values("genome"))
+        carrying = carrying.loc[~carrying.index.get_level_values("genome").isin(duplicates)]
 
-        df = pd.concat([df.assign(group=i) for i, df in enumerate(output)])
-
-        # Assign a set of global coordinates to each gene
-        # This will take into account the size of each group, which is the
-        # maximum start or stop value within each group.
-        group_sizes = (
-            df.assign(end=df[['start', 'stop']].max(axis=1))
-            .groupby("group")
-            ['end'].max()
-        )
-        # To use those to build the global coordinates, take the cumulative sum
-        group_offset = group_sizes.cumsum() - group_sizes
-        
-        df = df.assign(
-            start=df["start"] + df["group"].apply(group_offset.get),
-            stop=df["stop"] + df["group"].apply(group_offset.get)
-        ).reset_index(drop=True)
-
-        return df, group_offset
+        placed = Coords(in_bin.set_index(["genome", "qseqid"]).loc[carrying.index].reset_index())
+        return in_bin, carrying, placed, _largest_cluster(placed.to_df(), max_gap)
 
     @staticmethod
     def customize_label(label: str, remove_gene_id: bool, remove_org_tag: bool):
