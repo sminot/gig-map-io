@@ -400,7 +400,7 @@ class ContrastMetagenomesSet(DatasetDict):
             else:
                 method = "p ="
             test = f"chi-squared = {chi2:.1f}, {dof} df, {method} {format_pvalue(pvalue)}"
-        subtitle = f"Direction agrees for {agree:,} of the {both:,} bins both call; {test}"
+        subtitle = f"Direction agrees for {agree:,} of the {both:,} bins both call<br>{test}"
         return observed, expected, subtitle
 
     def compare_sig_categories(
@@ -452,8 +452,7 @@ class ContrastMetagenomesSet(DatasetDict):
             observed=obs,
             expected=exp,
             y_title="Pangenome bins",
-            caption=f"{subtitle}<br>Each tick: direction in <b>{self_label}</b> (upper) "
-                    f"and <b>{comparator_label}</b> (lower)",
+            caption=f"{subtitle}<br>Ticks: <b>{self_label}</b> (upper), <b>{comparator_label}</b> (lower)",
             width=width,
             height=height,
             file_prefix=file_prefix,
@@ -689,9 +688,9 @@ class ContrastMetagenomesSet(DatasetDict):
         # The scatter shares the comparator volcano's vertical axis, so only
         # the volcano names it
         fig.update_xaxes(title_text=f"-log10({sig_label})", row=1, col=1)
-        fig.update_yaxes(title_text=f"log<sub>2</sub> fold change, {comparator_label}", row=1, col=1)
+        fig.update_yaxes(title_text=f"log<sub>2</sub>(cases / controls), {comparator_label}", row=1, col=1)
         fig.update_yaxes(title_text=None, row=1, col=2)
-        fig.update_xaxes(title_text=f"log<sub>2</sub> fold change, {self_label}", row=2, col=2)
+        fig.update_xaxes(title_text=f"log<sub>2</sub>(cases / controls), {self_label}", row=2, col=2)
         fig.update_yaxes(title_text=f"-log10({sig_label})", row=2, col=2)
         save_image(fig, file_prefix)
         return fig

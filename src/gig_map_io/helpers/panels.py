@@ -94,7 +94,8 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
         rendered at, default 7, and a panel may carry its own; a panel may
         also carry ``height_mm`` to be rendered that tall instead of keeping
         the proportions it was drawn with, which is what gives a legend room
-        in a narrow cell.
+        in a narrow cell, and ``"legend": false`` to be drawn without its
+        legend, where another panel's legend already names the same traces.
     root:
         The directory the panel paths are relative to.
     output:
@@ -131,6 +132,7 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
                 max_height,
                 float(panel.get("font_pt", font_pt)),
                 float(panel_height) * POINTS_PER_MM if panel_height is not None else None,
+                bool(panel.get("legend", True)),
             )
             page_width, page_height = _page_size(page)
             scale = cell_width / page_width
@@ -173,17 +175,23 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
 
 
 def _panel_page(
-    pdf: Path, width: float, max_height: float | None, font_pt: float, height: float | None
+    pdf: Path, width: float, max_height: float | None, font_pt: float, height: float | None, legend: bool
 ) -> PageObject:
     """
     The page to place for one panel: the plotly figure beside ``pdf``
-    rendered at ``width`` points with ``font_pt`` text when its
-    specification exists, otherwise the first page of ``pdf`` itself.
+    rendered at ``width`` points with ``font_pt`` text, and without its
+    legend unless ``legend``, when its specification exists, otherwise the
+    first page of ``pdf`` itself.
     """
     spec = pdf.with_suffix(".json")
     if not spec.exists():
+        if not legend:
+            raise ValueError(f"{pdf} has no plotly specification beside it, so its legend cannot be removed")
         return PdfReader(pdf).pages[0]
-    return render_at_print_size(pio.read_json(spec), width, max_height, font_pt, height)
+    fig = pio.read_json(spec)
+    if not legend:
+        fig.update_layout(showlegend=False)
+    return render_at_print_size(fig, width, max_height, font_pt, height)
 
 
 def render_at_print_size(

@@ -225,7 +225,8 @@ larger than its cell by the ratio of the figure's font size to `font_pt`
 data region keeps the shape it had on screen, and the panel is as tall as that
 region plus its margins (and at least as tall as a legend down its right side
 needs), so a narrow cell does not flatten the plot. A panel may carry its own
-`font_pt`, and `height_mm` to override the height. A PDF with no
+`font_pt`, `height_mm` to override the height, and `"legend": false` to drop
+its legend where another panel's already names the same traces. A PDF with no
 specification beside it, such as a matplotlib figure drawn in inches, is placed
 as it is. Either way the content stays vector.
 

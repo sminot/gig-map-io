@@ -23,7 +23,7 @@ from ..helpers.style import (
     TEMPLATE, THRESHOLD_LINE, ZERO_LINE, group_colors, legend_above,
 )
 
-LOG2_FOLD_CHANGE_LABEL = "log<sub>2</sub> fold change, cases / controls"
+LOG2_FOLD_CHANGE_LABEL = "log<sub>2</sub>(cases / controls)"
 
 #: How the association columns are labeled wherever they are plotted
 ASSOCIATION_LABELS = dict(
