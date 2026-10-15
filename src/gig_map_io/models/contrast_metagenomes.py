@@ -322,15 +322,16 @@ class ContrastMetagenomes(Dataset):
         fold_change_label: str = LOG2_FOLD_CHANGE_LABEL,
         width: int = 560,
         height: int = 450,
+        size_max: int = SIZE_BY_ABUNDANCE["size_max"],
         file_prefix: str | None = None,
         **kwargs
     ) -> go.Figure:
         """
         Volcano plot from the association results (see ``volcano_figure``
-        for its two versions), each bin sized by its mean abundance. Each bin
-        named in ``label_bins`` is pointed out with an arrow and its name.
-        ``fold_change_label`` names the two groups where they are not cases
-        and controls.
+        for its two versions), each bin sized by its mean abundance up to
+        ``size_max`` pixels across. Each bin named in ``label_bins`` is
+        pointed out with an arrow and its name. ``fold_change_label`` names
+        the two groups where they are not cases and controls.
         """
         fig = volcano_figure(
             self.association, fdr_thresh, max_abs_log2_fold_change, show_low_abundance, fold_change_label,
@@ -340,7 +341,7 @@ class ContrastMetagenomes(Dataset):
             opacity=DENSE_MARKER_OPACITY,
             width=width,
             height=height,
-            **SIZE_BY_ABUNDANCE,
+            **{**SIZE_BY_ABUNDANCE, "size_max": size_max},
             **kwargs
         )
         fig.update_traces(marker_line_width=0, marker_sizemin=MIN_MARKER_PX)
