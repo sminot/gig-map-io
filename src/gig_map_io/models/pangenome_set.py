@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from functools import cached_property
 from typing import Dict
 
@@ -24,6 +25,10 @@ NAME_PREFIX = re.compile(r"^(?:(?:MULTISPECIES|MAG|TPA|fOG):?\s+)+")
 
 #: A locus tag, as in "hypothetical protein DXA20_03275": unique to one gene
 LOCUS_TAG = re.compile(r"^[A-Za-z][A-Za-z0-9]*_[0-9]+$")
+
+#: A run of letters and digits within a word, the unit a term's spelling is
+#: settled by
+ALPHANUMERIC_RUN = re.compile(r"[A-Za-z0-9]+")
 
 #: Words that say nothing about function on their own. A term made only of
 #: these (and of short tokens such as "A" or "II") is not a functional term
@@ -192,10 +197,25 @@ class PangenomeSet(DatasetDict):
         # Drop rows where bin is NaN
         gb = self.gene_bins.dropna(subset=["bin"])
 
+        # Some genomes' records lowercase a name's first letter ("dNA
+        # polymerase", "aBC-type"), so terms are matched without regard to
+        # case and each alphanumeric run is shown in the spelling most gene
+        # names use, ties going to the first sorted. Runs rather than whole
+        # terms or words, because "aBC-type" may never occur capitalized while
+        # "ABC" occurs everywhere.
+        spellings = Counter(run for name in gb["combined_name"] for run in ALPHANUMERIC_RUN.findall(name))
+        run_display = {}
+        for run, _ in sorted(spellings.items(), key=lambda item: (-item[1], item[0])):
+            run_display.setdefault(run.casefold(), run)
+
+        def display(term: str) -> str:
+            return ALPHANUMERIC_RUN.sub(lambda match: run_display[match.group().casefold()], term)
+
         # Build bin_terms: (pangenome, bin) -> set of terms
         bin_terms = (
-            gb.groupby(["pangenome", "bin"])["combined_name"]
-            .apply(lambda names: set().union(*[annotation_terms(n) for n in names]))
+            gb["combined_name"].map(lambda name: {display(term) for term in annotation_terms(name)})
+            .groupby([gb["pangenome"], gb["bin"]])
+            .agg(lambda term_sets: set().union(*term_sets))
         )
 
         # Make sure that all of the features are in the pangenome set
