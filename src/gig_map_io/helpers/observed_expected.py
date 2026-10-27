@@ -8,7 +8,8 @@ tick, the answer is the difference in height between two bars standing next to
 each other.
 
 This is shared by the study-concordance figure and the bin-presence figure so
-that the two look and read the same way.
+that the two look and read the same way. Each also has a heatmap of the same
+table, on request, for reading the whole table at a glance.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 
 from .save_image import save_image
-from .style import PRIMARY, TEMPLATE, TOP_LEGEND
+from .style import PRIMARY, SIMPLE_TEMPLATE, TEMPLATE, TOP_LEGEND
 
 EXPECTED_COLOR = "#c3cedb"
 
@@ -39,6 +40,10 @@ FACETED_ROW_PX = 110
 ROW_GAP_PX = 34
 #: Room for the legend above the plot and the caption beneath it
 MIN_WIDTH = 420
+
+#: The heatmap's color scale runs from 1/2^limit to 2^limit times expected, the
+#: same for every table, so that a color means the same in each
+HEATMAP_LOG2_LIMIT = 2
 
 #: Below this expected count a fold change says more about rounding than about
 #: the data, and the chi-squared approximation is unreliable
@@ -292,4 +297,63 @@ def _plot_faceted(ticks, groups, observed, expected, y_title, caption, width, he
         plot_height=len(order) * FACETED_ROW_PX + (len(order) - 1) * ROW_GAP_PX,
         margin=dict(b=55, l=72, r=20, t=50 + ROW_GAP_PX), y_title_shift=-58, caption_shift=-40,
     )
+    return fig
+
+
+def plot_observed_expected_heatmap(
+    observed: pd.DataFrame,
+    expected: pd.DataFrame,
+    x_title: str,
+    y_title: str,
+    caption: str,
+    width: int,
+    height: int,
+    file_prefix: str | None = None,
+) -> go.Figure:
+    """
+    A contingency table as a grid of cells, ``observed``'s rows up (the
+    first at the bottom) and its columns across: each cell colored by how
+    many times more (warm) or fewer (cool) counts it holds than ``expected``,
+    on a log scale centered on 1x, and labeled with its observed and expected
+    counts. ``caption`` goes beneath, one line per ``<br>``.
+    """
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log_fold = np.log2(observed / expected.where(expected > 0))
+    # A cell beyond the scale, or empty where some were expected, sits at its
+    # end, and its label gives the exact fold
+    limit = HEATMAP_LOG2_LIMIT
+    z = log_fold.clip(-limit, limit)
+    fig = go.Figure(go.Heatmap(
+        z=z.values, x=list(observed.columns), y=list(observed.index),
+        colorscale="RdBu_r", zmid=0, zmin=-limit, zmax=limit, xgap=2, ygap=2, hoverinfo="skip",
+        # Shorter than the plot, so that its two-line title clears the top tick
+        # The title at the cells' text size: at the axis titles' it outweighs them
+        colorbar=dict(
+            title=dict(text="Observed /<br>expected", font_size=12), thickness=14, len=0.8, y=0.4,
+            tickvals=list(range(-limit, limit + 1)),
+            ticktext=[f"{2 ** v}×" if v >= 0 else f"1/{2 ** -v}×" for v in range(-limit, limit + 1)],
+        ),
+    ))
+    for r in observed.index:
+        for c in observed.columns:
+            cell = log_fold.loc[r, c]
+            fold = f"{2.0 ** cell:.2f}×" if np.isfinite(cell) else ("0×" if expected.loc[r, c] > 0 else "")
+            # Dark cells take white text
+            dark = np.isfinite(z.loc[r, c]) and abs(z.loc[r, c]) > 0.6 * limit
+            fig.add_annotation(
+                x=c, y=r, showarrow=False,
+                text=f"<b>{observed.loc[r, c]:,}</b><br>{expected.loc[r, c]:,.1f} expected<br>{fold}",
+                font=dict(size=12, color="#ffffff" if dark else "#1a1a1a"),
+            )
+    fig.add_annotation(
+        x=0.5, xref="paper", y=0, yref="paper", yshift=-55, xanchor="center", yanchor="top",
+        showarrow=False, font=dict(size=11, color="#555555"), text=caption,
+    )
+    fig.update_layout(
+        template=SIMPLE_TEMPLATE, width=width, height=height,
+        margin=dict(t=30, b=55 + CAPTION_LINE_PX * (caption.count("<br>") + 1)),
+        xaxis=dict(title=x_title, side="bottom", showline=False, ticks=""),
+        yaxis=dict(title=y_title, showline=False, ticks=""),
+    )
+    save_image(fig, file_prefix)
     return fig

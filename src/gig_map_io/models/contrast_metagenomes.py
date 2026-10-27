@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 
 from .dataset import Dataset
 from ..helpers.format_pvalue import format_pvalue
-from ..helpers.observed_expected import expected_counts, plot_observed_expected
+from ..helpers.observed_expected import expected_counts, plot_observed_expected, plot_observed_expected_heatmap
 from .sample_group import _key as _label_key
 from ..helpers.make_lines import make_lines
 from ..helpers.save_image import save_image
@@ -46,6 +46,8 @@ ASSOCIATION_LABELS = dict(
 #: keeps the many rare bins visible beside a few that run to thousands of RPKM
 SIZE_BY_ABUNDANCE = dict(size="mean_abund", size_max=14)
 MIN_MARKER_PX = 4
+#: Where a volcano's bin label sits relative to its point, in pixels
+LABEL_OFFSET_PX = (45, -25)
 
 #: One facet row of an abundance histogram, and the gap between rows
 HISTOGRAM_ROW_PX = 150
@@ -318,7 +320,7 @@ class ContrastMetagenomes(Dataset):
         fdr_thresh: float = FDR_THRESH,
         max_abs_log2_fold_change: float = 4.0,
         show_low_abundance: bool = False,
-        label_bins: tuple = (),
+        label_bins: tuple | dict = (),
         fold_change_label: str = LOG2_FOLD_CHANGE_LABEL,
         width: int = 560,
         height: int = 450,
@@ -330,7 +332,9 @@ class ContrastMetagenomes(Dataset):
         Volcano plot from the association results (see ``volcano_figure``
         for its two versions), each bin sized by its mean abundance up to
         ``size_max`` pixels across. Each bin named in ``label_bins`` is
-        pointed out with an arrow and its name. ``fold_change_label`` names
+        pointed out with an arrow and its name, its label up and to the right
+        unless ``label_bins`` maps the bin to its own (x, y) offset in pixels,
+        for labels that would otherwise collide. ``fold_change_label`` names
         the two groups where they are not cases and controls.
         """
         fig = volcano_figure(
@@ -346,7 +350,8 @@ class ContrastMetagenomes(Dataset):
         )
         fig.update_traces(marker_line_width=0, marker_sizemin=MIN_MARKER_PX)
         y = "neg_log10_pvalue" if show_low_abundance else "neg_log10_qvalue"
-        for bin in label_bins:
+        offsets = label_bins if isinstance(label_bins, dict) else dict.fromkeys(label_bins, LABEL_OFFSET_PX)
+        for bin, (label_x, label_y) in offsets.items():
             point = self.association.loc[self.association["feature"] == bin]
             if point.empty:
                 raise ValueError(f"{bin} is not among the bins this contrast tested")
@@ -356,7 +361,7 @@ class ContrastMetagenomes(Dataset):
                 x=float(point["log2_fold_change"].clip(-max_abs_log2_fold_change, max_abs_log2_fold_change).iloc[0]),
                 y=float(point[y].iloc[0]),
                 text=bin, showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.2,
-                arrowcolor="#333333", ax=45, ay=-25, font=dict(size=13),
+                arrowcolor="#333333", ax=label_x, ay=label_y, font=dict(size=13),
             )
         save_image(fig, file_prefix)
         return fig
@@ -471,19 +476,48 @@ class ContrastMetagenomes(Dataset):
                 observed.append(int(table.loc[present, group]))
                 expected.append(result["expected"].loc[present, group])
 
-        measured = f"{bin} / {norm_bin}" if norm_bin is not None else f"{bin} (RPKM)"
         return plot_observed_expected(
             ticks=ticks,
             groups=groups,
             observed=observed,
             expected=expected,
             y_title="Samples",
-            caption=(
-                f"Present at {measured} &#8805; {threshold:g} &#183; n = {result['n']} "
-                f"<br>odds ratio {result['odds_ratio']:.2f} "
-                f"&#183; Fisher's exact p = {format_pvalue(result['pvalue'])}"
-            ),
+            caption=_contingency_caption(result, bin, norm_bin),
             facet_groups=True,
+            width=width,
+            height=height,
+            file_prefix=file_prefix,
+        )
+
+    def plot_bin_contingency_heatmap(
+        self,
+        bin: str,
+        metadata_col: str,
+        norm_bin: str | None = None,
+        threshold: float = 0.25,
+        group_labels: dict | None = None,
+        width: int = 460,
+        height: int = 340,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        The 2x2 table of :meth:`plot_bin_contingency` as a grid, drawn the
+        same way as the study-concordance heatmap: present above absent, the
+        metadata groups across, each cell colored by observed over expected
+        and labeled with both counts. The caption carries the same test.
+        """
+        result = self.bin_contingency(bin, metadata_col, norm_bin, threshold)
+        labels = {_label_key(k): v for k, v in (group_labels or {}).items()}
+        # Plotly draws the first row at the bottom
+        rows = {False: "Absent", True: "Present"}
+        columns = {group: str(labels.get(_label_key(group), group)) for group in result["table"].columns}
+        return plot_observed_expected_heatmap(
+            # reindex, not loc: a list of booleans given to loc is a mask
+            result["table"].reindex(list(rows)).rename(index=rows, columns=columns),
+            result["expected"].reindex(list(rows)).rename(index=rows, columns=columns),
+            x_title="",
+            y_title=bin,
+            caption=_contingency_caption(result, bin, norm_bin),
             width=width,
             height=height,
             file_prefix=file_prefix,
@@ -568,3 +602,13 @@ class ContrastMetagenomes(Dataset):
             legend_above(fig)
         save_image(fig, file_prefix)
         return fig
+
+
+def _contingency_caption(result: dict, bin: str, norm_bin: str | None) -> str:
+    """What a bin-presence figure was called on, and Fisher's exact test of it."""
+    measured = f"{bin} / {norm_bin}" if norm_bin is not None else f"{bin} (RPKM)"
+    return (
+        f"Present at {measured} &#8805; {result['threshold']:g} &#183; n = {result['n']} "
+        f"<br>odds ratio {result['odds_ratio']:.2f} "
+        f"&#183; Fisher's exact p = {format_pvalue(result['pvalue'])}"
+    )

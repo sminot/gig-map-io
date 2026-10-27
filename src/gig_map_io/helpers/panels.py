@@ -22,6 +22,7 @@ text stays selectable.
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
@@ -31,6 +32,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.io as pio
 from pypdf import PageObject, PdfReader, PdfWriter, Transformation
+from pypdf.generic import ArrayObject, FloatObject, NameObject
 
 #: PDF user space is in points
 POINTS_PER_MM = 72 / 25.4
@@ -59,6 +61,15 @@ LEGEND_ENTRY_PX = 24.0
 
 #: Narrowest data region a panel is drawn with, in the figure's own pixels
 MIN_DATA_PX = 120.0
+
+#: Plotly's marker diameter where a trace gives none, in pixels
+PLOTLY_DEFAULT_MARKER_PX = 6.0
+#: Smallest diameter a marker is shrunk to for print, in the figure's own pixels
+MIN_PRINT_MARKER_PX = 3.0
+#: Width of one character of text, as a fraction of the font size
+CHARACTER_WIDTH = 0.55
+#: An axis is drawn this much longer than its title, so the title clears its ends
+AXIS_TITLE_PADDING = 1.15
 
 LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -94,8 +105,12 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
         rendered at, default 7, and a panel may carry its own; a panel may
         also carry ``height_mm`` to be rendered that tall instead of keeping
         the proportions it was drawn with, which is what gives a legend room
-        in a narrow cell, and ``"legend": false`` to be drawn without its
-        legend, where another panel's legend already names the same traces.
+        in a narrow cell, ``aspect`` to give its data region that height over
+        width instead of the shape it had on screen, ``plot_height_mm`` to give
+        the data region that height, so that panels side by side can match,
+        and ``"legend": false``
+        to be drawn without its legend, where another panel's legend already
+        names the same traces.
     root:
         The directory the panel paths are relative to.
     output:
@@ -133,6 +148,8 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
                 float(panel.get("font_pt", font_pt)),
                 float(panel_height) * POINTS_PER_MM if panel_height is not None else None,
                 bool(panel.get("legend", True)),
+                panel.get("aspect"),
+                float(panel["plot_height_mm"]) * POINTS_PER_MM if "plot_height_mm" in panel else None,
             )
             page_width, page_height = _page_size(page)
             scale = cell_width / page_width
@@ -158,14 +175,16 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
     sheet = writer.add_blank_page(width=width, height=height)
     for placement in placements:
         # The placement was measured from the top; PDF counts from the bottom
-        sheet.merge_transformed_page(
-            placement.page,
-            Transformation().scale(placement.scale, placement.scale).translate(
-                placement.x - _page_origin(placement.page)[0] * placement.scale,
-                height - placement.y - _page_origin(placement.page)[1] * placement.scale,
-            ),
+        transformation = Transformation().scale(placement.scale, placement.scale).translate(
+            placement.x - _page_origin(placement.page)[0] * placement.scale,
+            height - placement.y - _page_origin(placement.page)[1] * placement.scale,
         )
+        _move_patterns(placement.page, transformation.ctm)
+        sheet.merge_transformed_page(placement.page, transformation)
     sheet.merge_page(_label_overlay(placements, width, height, label_size))
+    # Merging copies a panel's objects many times over and leaves the copies
+    # behind: a box plot drawing thousands of outliers grew from 0.1 to 15 MB
+    writer.compress_identical_objects(remove_duplicates=True, remove_unreferenced=True)
 
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -175,7 +194,8 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
 
 
 def _panel_page(
-    pdf: Path, width: float, max_height: float | None, font_pt: float, height: float | None, legend: bool
+    pdf: Path, width: float, max_height: float | None, font_pt: float, height: float | None, legend: bool,
+    aspect: float | None, plot_height: float | None,
 ) -> PageObject:
     """
     The page to place for one panel: the plotly figure beside ``pdf``
@@ -191,11 +211,13 @@ def _panel_page(
     fig = pio.read_json(spec)
     if not legend:
         fig.update_layout(showlegend=False)
-    return render_at_print_size(fig, width, max_height, font_pt, height)
+    return render_at_print_size(fig, width, max_height, font_pt, height, aspect, plot_height)
 
 
 def render_at_print_size(
-    fig: go.Figure, width: float, max_height: float | None, font_pt: float, height: float | None = None
+    fig: go.Figure, width: float, max_height: float | None, font_pt: float, height: float | None = None,
+    aspect: float | None = None,
+    plot_height: float | None = None,
 ) -> PageObject:
     """
     ``fig`` as a PDF page that, scaled to ``width`` points wide, shows its
@@ -208,8 +230,13 @@ def render_at_print_size(
     keeping the whole canvas's proportions would flatten the data region:
     the margins hold text of a fixed size and so take a larger share of the
     width than of the height. Instead the data region keeps the shape it had
-    on screen, and the page is as tall as that region plus the margins.
-    ``height`` overrides that, and ``max_height`` caps either.
+    on screen, and the page is as tall as that region plus the margins --
+    or taller, where a y axis would otherwise be shorter than its title.
+    ``aspect`` replaces the screen shape with that height over width,
+    ``height`` overrides both, and ``max_height`` caps any of them.
+    ``plot_height`` (in points, like ``width``) instead fixes the data
+    region's height, measured as drawn. Scatter
+    markers shrink with the data region (see the comment where they do).
     """
     layout = fig.to_dict()["layout"]
     template_layout = (layout.get("template") or {}).get("layout", {})
@@ -221,27 +248,123 @@ def render_at_print_size(
     enlargement = base_font / font_pt
     canvas_width = width * enlargement
 
+    original_width = layout.get("width") or PLOTLY_DEFAULT_WIDTH
+    original_height = layout.get("height") or PLOTLY_DEFAULT_HEIGHT
+    margin = {**PLOTLY_DEFAULT_MARGIN, **(template_layout.get("margin") or {}), **(layout.get("margin") or {})}
+    legend_width, legend_height = _side_legend_px(fig, base_font)
+    across, down = margin["l"] + margin["r"] + legend_width, margin["t"] + margin["b"]
+    requested_aspect = aspect
+    # The measured region takes this share of the height the margins leave, so
+    # a change of canvas height reaches it in that proportion: a facet of two
+    # rows grows by less than half of what the canvas does
+    bottom, top = (layout.get("yaxis") or {}).get("domain") or (0.0, 1.0)
+    share = top - bottom
     if height is None:
-        original_width = layout.get("width") or PLOTLY_DEFAULT_WIDTH
-        original_height = layout.get("height") or PLOTLY_DEFAULT_HEIGHT
-        margin = {**PLOTLY_DEFAULT_MARGIN, **(template_layout.get("margin") or {}), **(layout.get("margin") or {})}
-        legend_width, legend_height = _side_legend_px(fig, base_font)
-        across, down = margin["l"] + margin["r"] + legend_width, margin["t"] + margin["b"]
-        aspect = (original_height - down) / (original_width - across)
+        if aspect is None:
+            aspect = (original_height - down) / (original_width - across)
         # A cell too narrow for the margins alone still gets a data region
         data_width = max(canvas_width - across, MIN_DATA_PX)
-        height = (down + max(data_width * aspect, legend_height)) / enlargement
+        data_height = max(data_width * aspect, _y_title_px(layout, template_layout, base_font))
+        height = (down + max(data_height, legend_height)) / enlargement
         if max_height is not None and height > max_height:
             # Too tall for its cell: narrow the panel, so the data region
             # keeps its shape, and let the cell center it
             data_width = max((max_height * enlargement - down) / aspect, MIN_DATA_PX)
             canvas_width = across + data_width
             height = max_height
+        if requested_aspect is not None:
+            # Margins grow to fit a legend or a long axis title, so the region
+            # drawn is not the one estimated: measure it and correct the height
+            drawn_width, drawn_height = _data_region_px(fig, canvas_width, height * enlargement)
+            region_height = drawn_width * requested_aspect
+            # A side legend taller than the region hangs below it, into a
+            # bottom margin grown to hold it
+            overhang = max(legend_height - region_height, 0.0)
+            if overhang:
+                # Plotly otherwise caps a vertical legend at the region's height
+                fig = go.Figure(fig).update_layout(margin_b=margin["b"] + overhang, legend_maxheight=legend_height)
+            height = (height * enlargement + (region_height - drawn_height) / share + overhang) / enlargement
+            if max_height is not None:
+                height = min(height, max_height)
     elif max_height is not None:
         height = min(height, max_height)
+    if plot_height is not None:
+        drawn_height = _data_region_px(fig, canvas_width, height * enlargement)[1]
+        height += (plot_height * enlargement - drawn_height) / share / enlargement
+
+    # Text keeps its size relative to the canvas and the data region shrinks,
+    # so markers drawn at their screen size crowd it; they shrink with the
+    # square root of the region, enough to part them while staying visible
+    shrink = (max(canvas_width - across, MIN_DATA_PX) / (original_width - across)) ** 0.5
+    if shrink < 1:
+        # Legend symbols would shrink with the markers they stand for
+        fig = _scale_markers(go.Figure(fig), shrink).update_layout(legend_itemsizing="constant")
 
     page = go.Figure(fig).update_layout(width=canvas_width, height=height * enlargement)
     return PdfReader(io.BytesIO(page.to_image(format="pdf"))).pages[0]
+
+
+def _data_region_px(fig: go.Figure, width: float, height: float) -> tuple:
+    """The width and height of ``fig``'s main data region, in pixels, as drawn at ``width`` by ``height``."""
+    svg = fig.to_image(format="svg", width=width, height=height).decode()
+    # The main subplot's clip rectangle is exactly its data region
+    region = re.search(r'<clipPath id="clip[^"]*xyplot"[^>]*>\s*<rect[^>]*>', svg)
+    if region is None:
+        raise ValueError("The figure has no xy subplot to measure")
+    size = dict(re.findall(r'\b(width|height)="([0-9.]+)"', region.group()))
+    return float(size["width"]), float(size["height"])
+
+
+def _y_title_px(layout: dict, template_layout: dict, base_font: float) -> float:
+    """
+    How tall a data region must be, in the figure's own pixels, for every
+    y axis to be at least as long as its title: an axis taking a fraction of
+    the region's height needs the title's length over that fraction. Titles
+    drawn as rotated annotations, such as one spanning several facets, need
+    the whole height.
+    """
+    template_size = (((template_layout.get("yaxis") or {}).get("title") or {}).get("font") or {}).get("size")
+    needed = 0.0
+    for key, axis in layout.items():
+        if not key.startswith("yaxis") or not isinstance(axis, dict):
+            continue
+        title = axis.get("title") or {}
+        size = (title.get("font") or {}).get("size") or template_size or base_font
+        bottom, top = axis.get("domain") or (0.0, 1.0)
+        needed = max(needed, _text_px(title.get("text"), size) / (top - bottom))
+    for annotation in layout.get("annotations") or []:
+        if abs(annotation.get("textangle") or 0) == 90:
+            size = (annotation.get("font") or {}).get("size") or base_font
+            needed = max(needed, _text_px(annotation.get("text"), size))
+    return needed * AXIS_TITLE_PADDING
+
+
+def _text_px(text: str | None, font_px: float) -> float:
+    """Roughly how long ``text`` runs at ``font_px``: its longest line, with markup removed."""
+    if not text:
+        return 0.0
+    lines = re.sub(r"<(?!br)[^>]*>", "", text).split("<br>")
+    return CHARACTER_WIDTH * font_px * max(len(re.sub(r"<[^>]*>", "", line)) for line in lines)
+
+
+def _scale_markers(fig: go.Figure, factor: float) -> go.Figure:
+    """``fig`` with every scatter marker's diameter multiplied by ``factor``."""
+    for trace in fig.data:
+        if trace.type not in ("scatter", "scattergl") or "markers" not in (trace.mode or "markers"):
+            continue
+        marker = trace.marker
+        if marker.sizeref is not None:
+            # Sized by a column: an area scale needs the square of the factor
+            # The smallest markers keep their size, chosen to stay visible:
+            # only the large ones crowd a small region
+            marker.sizeref = marker.sizeref / (factor ** 2 if marker.sizemode == "area" else factor)
+        elif marker.size is None:
+            marker.size = max(PLOTLY_DEFAULT_MARKER_PX * factor, MIN_PRINT_MARKER_PX)
+        elif isinstance(marker.size, (int, float)):
+            marker.size = max(marker.size * factor, MIN_PRINT_MARKER_PX)
+        else:
+            marker.size = [max(size * factor, MIN_PRINT_MARKER_PX) for size in marker.size]
+    return fig
 
 
 def _side_legend_px(fig: go.Figure, font_px: float) -> tuple:
@@ -282,6 +405,28 @@ def _wrap_rows(panels: Sequence[Dict[str, Any]], columns: int) -> List[List[tupl
         rows[-1].append((index, panel))
         used += span
     return rows
+
+
+def _move_patterns(page: PageObject, ctm: tuple) -> None:
+    """
+    Carry ``page``'s patterns along with a transformation of its content. A
+    pattern -- a color bar's gradient -- is placed in the page's own
+    coordinates, not the content's, so merging moves the drawing and leaves
+    the gradient behind, showing a slice of it or one flat color.
+    """
+    patterns = (page.get("/Resources") or {}).get("/Pattern")
+    if patterns is None:
+        return
+    for pattern in patterns.get_object().values():
+        pattern = pattern.get_object()
+        a, b, c, d, e, f = [float(v) for v in pattern.get("/Matrix", [1, 0, 0, 1, 0, 0])]
+        A, B, C, D, E, F = ctm
+        # The pattern's matrix followed by the content's, rows as PDF writes them
+        pattern[NameObject("/Matrix")] = ArrayObject(FloatObject(v) for v in (
+            a * A + b * C, a * B + b * D,
+            c * A + d * C, c * B + d * D,
+            e * A + f * C + E, e * B + f * D + F,
+        ))
 
 
 def _page_size(page: PageObject) -> tuple:

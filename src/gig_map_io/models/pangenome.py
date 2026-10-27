@@ -38,7 +38,7 @@ LOG_ODDS_STEP = 2
 #: How gene co-occurrence can be scored against distance: the column of
 #: calc_membership_vs_distance, its axis title, and how it is binned
 MEMBERSHIP_METRICS = {
-    "jaccard": ("membership", "Genome membership (Jaccard similarity)", lambda x: x.round(1)),
+    "jaccard": ("membership", "Shared genomes (Jaccard)", lambda x: x.round(1)),
     "log_odds": (
         "log2_odds_ratio",
         "Co-occurrence across genomes (log2 odds ratio)",

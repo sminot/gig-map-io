@@ -428,6 +428,9 @@ class PangenomeSet(DatasetDict):
             height=height, width=width, template=SIMPLE_TEMPLATE,
             margin=dict(l=70, r=20, t=50, b=70),
         )
+        # Thousands as "2k", as plotly writes them only past 10,000: written
+        # out, they crowd a narrow facet into rotating its labels
+        fig.update_xaxes(tickformat="~s")
 
         # Left-align the subplot titles
         for i in range(len(fig.layout.annotations)):

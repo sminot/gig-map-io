@@ -37,6 +37,9 @@ MAX_WIDTH = 1000
 CATEGORY_PX = 26
 MIN_PLOT_PX = 110
 EMPTY_HEIGHT = 140
+#: Room beneath the plot for the axis titles, and for each extra line of one
+BOTTOM_PX = 60
+TITLE_LINE_PX = 16
 
 
 def enrich_organisms(
@@ -97,6 +100,13 @@ def enrich_organisms(
     return df.sort_values(["pvalue", "organism"]).reset_index(drop=True)
 
 
+def _count_dtick(largest: int) -> int | None:
+    """Tick spacing for an axis counting bins up to ``largest``: plotly's own past ten."""
+    if largest <= 5:
+        return 1
+    return 2 if largest <= 10 else None
+
+
 def plot_enrichment(
     enrichment: pd.DataFrame,
     label: str,
@@ -144,7 +154,8 @@ def plot_enrichment(
     df.loc[df["n_foreground"] == 0, "log2_odds_ratio"] = np.nan
     if mark == "star":
         df["mark"] = np.where(df["qvalue"] < qvalue_threshold, "*", "")
-        odds_title = f"log2 odds ratio (* q < {qvalue_threshold})"
+        # Two lines: on one it runs into the count axis's title in a narrow panel
+        odds_title = f"log2 odds ratio<br>(* q < {qvalue_threshold})"
     elif mark == "qvalue":
         df["mark"] = "q = " + df["qvalue"].map("{:.2g}".format)
         odds_title = "log2 odds ratio"
@@ -165,7 +176,8 @@ def plot_enrichment(
         color_discrete_map=colors,
     )
 
-    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.06)
+    # Room between the halves keeps their axis titles apart in a narrow panel
+    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.12)
     for trace in px.bar(x="n_foreground", **shared).data:
         fig.add_trace(trace, row=1, col=1)
     for trace in px.bar(x="log2_odds_ratio", text="mark", **shared).data:
@@ -189,17 +201,19 @@ def plot_enrichment(
         width=width if width is not None else int(np.clip(
             PANELS_PX + LABEL_CHAR_PX * longest, MIN_WIDTH, MAX_WIDTH,
         )),
-        height=height if height is not None else top + 60 + max(MIN_PLOT_PX, CATEGORY_PX * n_categories),
+        height=height if height is not None else (
+            top + BOTTOM_PX + (TITLE_LINE_PX if mark == "star" else 0) + max(MIN_PLOT_PX, CATEGORY_PX * n_categories)
+        ),
         template=TEMPLATE,
         barmode="group",
         showlegend=show_legend,
         legend=dict(
             title_text="", orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom",
         ),
-        margin=dict(t=top),
-        # Up to ten bins, a gridline per bin reads as a count; past that the
-        # automatic ticks are what is legible
-        xaxis=dict(title="Bins in set", dtick=1 if df["n_foreground"].max() <= 10 else None),
+        margin=dict(t=top, b=BOTTOM_PX + (TITLE_LINE_PX if mark == "star" else 0)),
+        # A gridline per bin reads as a count while there are few; up to ten,
+        # one every two keeps the labels apart in a narrow panel
+        xaxis=dict(title="Bins in set", dtick=_count_dtick(df["n_foreground"].max())),
         xaxis2=dict(title=odds_title),
         yaxis=dict(title=axis_title, automargin=True),
     )

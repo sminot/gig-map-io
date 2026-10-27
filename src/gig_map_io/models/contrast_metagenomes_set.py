@@ -18,7 +18,9 @@ from gig_map_io.helpers.clustering import linkage_order
 from gig_map_io.helpers.make_lines import make_lines
 from gig_map_io.helpers.save_image import save_image
 from gig_map_io.helpers.format_pvalue import format_pvalue
-from gig_map_io.helpers.observed_expected import expected_counts, plot_observed_expected
+from gig_map_io.helpers.observed_expected import (
+    expected_counts, plot_observed_expected, plot_observed_expected_heatmap,
+)
 from gig_map_io.helpers.sidebar import add_category_sidebar
 from gig_map_io.helpers.significance import DIRECTIONS, add_significance, call_direction
 from gig_map_io.helpers.style import (
@@ -479,48 +481,14 @@ class ContrastMetagenomesSet(DatasetDict):
         """
         observed, expected, subtitle = self._call_contingency(comparator, fdr, sig_thresh)
         # Plotly draws the first row at the bottom
-        across, up = ["<", "=", ">"], ["<", "=", ">"]
-        observed, expected = observed.loc[up, across], expected.loc[up, across]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            log_fold = np.log2(observed / expected.where(expected > 0))
-        # One scale for every comparison, so a color means the same in each; a
-        # cell beyond it, or with no bins where some were expected, sits at
-        # the end, and its label gives the exact fold
-        limit = HEATMAP_LOG2_LIMIT
-        z = log_fold.clip(-limit, limit)
+        order = ["<", "=", ">"]
         names = {"<": "Lower in cases", "=": "Not called", ">": "Higher in cases"}
-        fig = go.Figure(go.Heatmap(
-            z=z.values, x=[names[c] for c in across], y=[names[r] for r in up],
-            colorscale="RdBu_r", zmid=0, zmin=-limit, zmax=limit, xgap=2, ygap=2, hoverinfo="skip",
-            # Shorter than the plot, so that its two-line title clears the top tick
-            colorbar=dict(
-                title="Observed /<br>expected", thickness=14, len=0.8, y=0.4,
-                tickvals=list(range(-limit, limit + 1)),
-                ticktext=[f"{2 ** v}×" if v >= 0 else f"1/{2 ** -v}×" for v in range(-limit, limit + 1)],
-            ),
-        ))
-        for r in up:
-            for c in across:
-                cell = log_fold.loc[r, c]
-                fold = f"{2.0 ** cell:.2f}×" if np.isfinite(cell) else ("0×" if expected.loc[r, c] > 0 else "")
-                # Dark cells take white text
-                dark = np.isfinite(z.loc[r, c]) and abs(z.loc[r, c]) > 0.6 * limit
-                fig.add_annotation(
-                    x=names[c], y=names[r], showarrow=False,
-                    text=f"<b>{observed.loc[r, c]:,}</b><br>{expected.loc[r, c]:,.1f} expected<br>{fold}",
-                    font=dict(size=12, color="#ffffff" if dark else "#1a1a1a"),
-                )
-        fig.add_annotation(
-            x=0.5, xref="paper", y=0, yref="paper", yshift=-55, xanchor="center", yanchor="top",
-            showarrow=False, font=dict(size=11, color="#555555"), text=subtitle,
+        return plot_observed_expected_heatmap(
+            observed.loc[order, order].rename(index=names, columns=names),
+            expected.loc[order, order].rename(index=names, columns=names),
+            x_title=self_label, y_title=comparator_label, caption=subtitle,
+            width=width, height=height, file_prefix=file_prefix,
         )
-        fig.update_layout(
-            template=SIMPLE_TEMPLATE, width=width, height=height, margin=dict(t=30, b=85),
-            xaxis=dict(title=self_label, side="bottom", showline=False, ticks=""),
-            yaxis=dict(title=comparator_label, showline=False, ticks=""),
-        )
-        save_image(fig, file_prefix)
-        return fig
 
     def compare_sig_scatter(
         self,
@@ -702,9 +670,6 @@ ABUNDANCE_PANEL_PX = 300
 HEATMAP_GAP_PX = 30
 LABEL_CHAR_PX = 6
 
-#: The color scale of the concordance heatmaps runs from 2**-limit to
-#: 2**limit times the expected count
-HEATMAP_LOG2_LIMIT = 2
 
 #: Below this expected count in any cell, the chi-squared distribution is a
 #: poor guide and the p-value comes from random tables with the same margins

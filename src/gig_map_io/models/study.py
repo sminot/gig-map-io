@@ -451,6 +451,11 @@ class Study:
         kwargs.setdefault("group_labels", self._metadata_group(kwargs["metadata_col"])[0])
         return self.contrast(organism).plot_bin_contingency(bin, **kwargs)
 
+    def plot_bin_contingency_heatmap(self, organism: str, bin: str, **kwargs: Any) -> go.Figure:
+        kwargs.setdefault("metadata_col", self.parameter)
+        kwargs.setdefault("group_labels", self._metadata_group(kwargs["metadata_col"])[0])
+        return self.contrast(organism).plot_bin_contingency_heatmap(bin, **kwargs)
+
     def _metadata_group(self, metadata_col: str) -> tuple[Dict[str, str], List[str]]:
         """
         Display names for the values of a metadata column, and the order to

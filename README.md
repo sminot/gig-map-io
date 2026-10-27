@@ -224,8 +224,13 @@ larger than its cell by the ratio of the figure's font size to `font_pt`
 (default 7), then scaled into the cell, so the text lands at `font_pt`. The
 data region keeps the shape it had on screen, and the panel is as tall as that
 region plus its margins (and at least as tall as a legend down its right side
-needs), so a narrow cell does not flatten the plot. A panel may carry its own
-`font_pt`, `height_mm` to override the height, and `"legend": false` to drop
+needs), so a narrow cell does not flatten the plot. A y axis is never drawn
+shorter than its title, and scatter markers shrink with the square root of
+the data region's shrinkage. A panel may carry its own
+`font_pt`, `height_mm` to override the height, `aspect` to give its data
+region that height over width (measured from a trial render, since margins
+grow to fit legends and long titles), `plot_height_mm` to give its data
+region that height, measured the same way, and `"legend": false` to drop
 its legend where another panel's already names the same traces. A PDF with no
 specification beside it, such as a matplotlib figure drawn in inches, is placed
 as it is. Either way the content stays vector.
