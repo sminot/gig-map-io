@@ -66,6 +66,8 @@ MIN_DATA_PX = 120.0
 PLOTLY_DEFAULT_MARKER_PX = 6.0
 #: Smallest diameter a marker is shrunk to for print, in the figure's own pixels
 MIN_PRINT_MARKER_PX = 3.0
+#: Rounds of measuring and narrowing a panel whose aspect does not fit its cell
+ASPECT_ROUNDS = 4
 #: Width of one character of text, as a fraction of the font size
 CHARACTER_WIDTH = 0.55
 #: An axis is drawn this much longer than its title, so the title clears its ends
@@ -259,6 +261,8 @@ def render_at_print_size(
     # rows grows by less than half of what the canvas does
     bottom, top = (layout.get("yaxis") or {}).get("domain") or (0.0, 1.0)
     share = top - bottom
+    left, right = (layout.get("xaxis") or {}).get("domain") or (0.0, 1.0)
+    column_share = right - left
     if height is None:
         if aspect is None:
             aspect = (original_height - down) / (original_width - across)
@@ -275,7 +279,8 @@ def render_at_print_size(
         if requested_aspect is not None:
             # Margins grow to fit a legend or a long axis title, so the region
             # drawn is not the one estimated: measure it and correct the height
-            drawn_width, drawn_height = _data_region_px(fig, canvas_width, height * enlargement)
+            measured_at = height * enlargement
+            drawn_width, drawn_height = _data_region_px(fig, canvas_width, measured_at)
             region_height = drawn_width * requested_aspect
             # A side legend taller than the region hangs below it, into a
             # bottom margin grown to hold it
@@ -284,6 +289,23 @@ def render_at_print_size(
                 # Plotly otherwise caps a vertical legend at the region's height
                 fig = go.Figure(fig).update_layout(margin_b=margin["b"] + overhang, legend_maxheight=legend_height)
             height = (height * enlargement + (region_height - drawn_height) / share + overhang) / enlargement
+            # Too tall for its cell: draw it narrower instead, between wider
+            # side margins, so the region keeps its shape and the panel stays
+            # centered at the cell's width. The region takes only its column's
+            # share of a change in width, and margins move, so a few rounds
+            # settle it
+            side = 0.0
+            for _ in range(ASPECT_ROUNDS):
+                if max_height is None or height <= max_height * 1.001:
+                    break
+                # The region's height with the canvas at the cell's limit
+                fitting_height = drawn_height + (max_height * enlargement - measured_at) * share
+                side += (drawn_width - fitting_height / requested_aspect) / column_share / 2
+                fig = go.Figure(fig).update_layout(margin_l=margin["l"] + side, margin_r=margin["r"] + side)
+                height = max_height
+                measured_at = height * enlargement
+                drawn_width, drawn_height = _data_region_px(fig, canvas_width, measured_at)
+                height = (height * enlargement + (drawn_width * requested_aspect - drawn_height) / share) / enlargement
             if max_height is not None:
                 height = min(height, max_height)
     elif max_height is not None:
