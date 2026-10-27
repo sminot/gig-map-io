@@ -351,7 +351,9 @@ def plot_observed_expected_heatmap(
     )
     fig.update_layout(
         template=SIMPLE_TEMPLATE, width=width, height=height,
-        margin=dict(t=30, b=55 + CAPTION_LINE_PX * (caption.count("<br>") + 1)),
+        # Room beneath the caption too: under an axis title its last line
+        # otherwise sits on the canvas edge
+        margin=dict(t=30, b=65 + CAPTION_LINE_PX * (caption.count("<br>") + 1)),
         xaxis=dict(title=x_title, side="bottom", showline=False, ticks=""),
         yaxis=dict(title=y_title, showline=False, ticks=""),
     )
