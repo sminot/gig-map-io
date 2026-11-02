@@ -172,6 +172,7 @@ def plot_gene_context(
     width: float,
     font_size: float,
     note: str | None = None,
+    row_height: float = ROW_HEIGHT_IN,
 ) -> plt.Figure:
     """
     Draw the context map.
@@ -196,10 +197,13 @@ def plot_gene_context(
         A line for the footnote above the key to the colors, such as how many
         of the bin's genes lie outside the window. Like every figure here
         the map has no title.
+    row_height:
+        Inches per genome; less than the default packs a map of many genomes
+        onto one page.
     """
     lo, hi = window
     n_rows = len(rows)
-    rows_height = ROW_HEIGHT_IN * n_rows + 0.55
+    rows_height = row_height * n_rows + 0.55
     # The height is a placeholder until the labels are drawn and measured
     fig = plt.figure(figsize=(width, 1.0))
     gs = fig.add_gridspec(2, 1, hspace=0, right=0.98)

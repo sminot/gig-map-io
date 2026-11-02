@@ -78,6 +78,10 @@ MIN_ABS_LOG2_FOLD_CHANGE = math.log2(MIN_FOLD_CHANGE)
 # else Arial or its metric twin Liberation Sans (which the container has)
 matplotlib.rcParams["font.family"] = "sans-serif"
 matplotlib.rcParams["font.sans-serif"] = ["Helvetica", "Arial", "Liberation Sans", "DejaVu Sans"]
+# Mathtext in the same family, so that $\it{Alistipes}$ italicizes a genus in place
+matplotlib.rcParams["mathtext.fontset"] = "custom"
+matplotlib.rcParams["mathtext.rm"] = "sans"
+matplotlib.rcParams["mathtext.it"] = "sans:italic"
 
 pio.templates["gig_map"] = go.layout.Template(
     layout=dict(
