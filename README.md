@@ -211,7 +211,19 @@ field, the isolate, a designation the organism name carries, or a
 submitter-given assembly name, in that order. Records are fetched once and
 kept in a JSON cache the caller names, so a complete cache needs no network.
 `Study.genome_names(cache)` covers a study's pangenomes; the context map and
-`Phylogeny.newick` take the resulting mapping.
+`Phylogeny.newick` take the resulting mapping. `Study.bin_carriers(bins, names)`
+lists every genome carrying any of the bins, one column per bin holding how
+many of its genes the genome carries, with each GenBank/RefSeq pair as one row.
+
+## Trees
+
+A `Phylogeny` drops the GenBank leaf of any assembly also present under its
+RefSeq accession when it is built, so every tree drawn shows each genome once.
+`Phylogeny.compare` draws one bin's tanglegram against the core genome;
+`Phylogeny.subtree(leaves, collapse_others=True)` cuts a tree to the clade
+holding `leaves`, each clade without any of them drawn as one leaf, and
+`Phylogeny.compare_several` sets several bins' trees beside it, leaves colored
+by group (such as species) and those joined to none packed closer.
 
 ## Multi-panel figures
 
@@ -239,7 +251,9 @@ region that height, measured the same way, and `"legend": false` to drop
 its legend where another panel's already names the same traces. A cell may
 hold `{"stack": [...], "span": n}` instead of one panel: its panels drawn one
 above another at the cell's width and lettered in turn, so that one tall
-panel can run beside several shorter ones. A PDF with no
+panel can run beside several shorter ones. A cell carrying
+`"align": "bottom"` sits on the bottom of its row, so that panels of
+different heights share a baseline. A PDF with no
 specification beside it, such as a matplotlib figure drawn in inches, is placed
 as it is. Either way the content stays vector.
 

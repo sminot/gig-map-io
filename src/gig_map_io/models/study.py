@@ -409,6 +409,70 @@ class Study:
     def bin_presence_heatmap(self, organism: str, bins, **kwargs: Any) -> go.Figure:
         return self.pangenome(organism).bin_presence_heatmap(bins, **kwargs)
 
+    def bin_carriers(self, features: Iterable[tuple], genome_names: pd.DataFrame) -> pd.DataFrame:
+        """
+        Every genome carrying any gene of the (pangenome, bin) pairs in
+        ``features``: one row per genome and one column per bin, holding how
+        many of the bin's genes gig-map detected in it. A genome of the bin's
+        own organism without any of its genes holds 0; another organism's
+        genome is left blank. Bins run by organism, then by bin number, and the
+        rows by organism, species and accession.
+
+        A genome NCBI publishes under both a GenBank (GCA_) and a RefSeq (GCF_)
+        accession is one row naming both; the two copies' counts are the same.
+        ``genome_names`` is the table ``genome_names`` writes, which gives each
+        row its species, NCBI organism name, strain and assembly level.
+        """
+        features = sorted(features, key=lambda f: (f[0], int(f[1].split()[-1])))
+        columns = {
+            (organism, bin_id): f"{organism} {bin_id} ({int(self.pangenome(organism).bin_size[bin_id])} genes)"
+            for organism, bin_id in features
+        }
+        names = genome_names.set_index("genome")
+        detected = pd.concat([
+            self.pangenome(organism).genome_content
+            .loc[lambda df: (df["bin"] == bin_id) & (df["n_genes_detected"] > 0), ["genome", "n_genes_detected"]]
+            .assign(pangenome=organism, column=columns[(organism, bin_id)])
+            for organism, bin_id in features
+        ])
+        detected["accession"] = detected["genome"].map(names["accession"])
+        # The accession less its GCA_/GCF_ prefix, which the two copies share
+        detected["assembly"] = detected["accession"].str[4:]
+
+        wide = detected.pivot_table(
+            index=["pangenome", "assembly"], columns="column", values="n_genes_detected", aggfunc="max",
+        ).reindex(columns=list(columns.values()))
+        for organism in organism_order(f[0] for f in features):
+            own = [column for (bin_organism, _), column in columns.items() if bin_organism == organism]
+            rows = wide.index.get_level_values("pangenome") == organism
+            wide.loc[rows, own] = wide.loc[rows, own].fillna(0)
+
+        copies = detected.drop_duplicates("genome").join(names.drop(columns="accession"), on="genome")
+        accessions = copies.pivot_table(
+            index="assembly", columns=copies["accession"].str[:3], values="accession", aggfunc="first",
+        ).reindex(columns=["GCF", "GCA"])
+        # Each genome described from its RefSeq record where it has one
+        record = copies.sort_values("accession", ascending=False).drop_duplicates("assembly").set_index("assembly")
+        annotations = pd.DataFrame({
+            # NCBI's organism name can carry a strain other than the record's own
+            # (a re-sequenced isolate of DSM 17242), so the species is its first two words
+            "species": record["organism_name"].str.split().str[:2].str.join(" "),
+            "organism_name": record["organism_name"],
+            "strain": record["strain"].fillna(record["isolate"]),
+            "refseq_accession": accessions["GCF"],
+            "genbank_accession": accessions["GCA"],
+            "assembly_level": record["assembly_level"],
+        }, index=record.index)
+
+        counts = list(columns.values())
+        table = (
+            wide.reset_index()
+            .join(annotations, on="assembly")
+            .sort_values(["pangenome", "species", "assembly"])
+        )
+        table[counts] = table[counts].astype("Int64")
+        return table[["pangenome", *annotations.columns, *counts]].reset_index(drop=True)
+
 
     def volcano_plot(self, **kwargs: Any) -> go.Figure:
         return self.contrasts.volcano_plot(**kwargs)

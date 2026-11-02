@@ -114,7 +114,10 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
         to be drawn without its legend, where another panel's legend already
         names the same traces. A cell may instead hold ``stack``, a list of
         such panels drawn one above another at the cell's width and lettered
-        in turn, so that a tall panel can run beside several shorter ones.
+        in turn, so that a tall panel can run beside several shorter ones. A
+        cell carrying ``"align": "bottom"`` sits on the bottom of its row
+        rather than hanging from the top, so that panels of different heights
+        side by side share a baseline.
     root:
         The directory the panel paths are relative to.
     output:
@@ -142,10 +145,12 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
     for row in rows:
         row_height = 0.0
         cell_x = margin
+        cells = []
         for _, cell in row:
             span = int(cell.get("span", 1))
             cell_width = span * column_width + (span - 1) * gutter
             panel_top = top
+            cell_start = len(placements)
             for panel in cell.get("stack", [cell]):
                 panel_height = panel.get("height_mm")
                 page = _panel_page(
@@ -176,7 +181,14 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
                 lettered += 1
                 panel_top += placed_height + gutter
             row_height = max(row_height, panel_top - gutter - top)
+            cells.append((cell_start, len(placements), panel_top - gutter, cell.get("align", "top")))
             cell_x += cell_width + gutter
+        for start, end, cell_bottom, align in cells:
+            if align == "bottom":
+                drop = top + row_height - cell_bottom
+                for placement in placements[start:end]:
+                    placement.y += drop
+                    placement.cell_top += drop
         top += row_height + gutter
     height = top - gutter + margin
 

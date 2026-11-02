@@ -1,9 +1,8 @@
 import logging
 import re
-from typing import Dict, List
+from typing import Dict, Iterable, List
 
 from Bio.Phylo.BaseTree import Tree, Clade
-import pandas as pd
 import numpy as np
 from scipy import stats
 import plotly.graph_objects as go
@@ -11,47 +10,46 @@ from plotly.subplots import make_subplots
 
 from .genomes import genbank_duplicates
 from .save_image import save_image
-from .style import SIMPLE_TEMPLATE
+from .style import SIMPLE_TEMPLATE, TOP_LEGEND
 
 logger = logging.getLogger(__name__)
 
 TANGLEGRAM_WIDTH = 720
 TANGLEGRAM_HEIGHT_RANGE = (380, 700)
 TANGLEGRAM_PX_PER_LEAF = 12
+#: compare_several: the canvas, the fewest leaves a stacked tree's band is
+#: sized for, and the gap between bands, which holds each one's title and axis
+SEVERAL_TANGLEGRAM_SIZE = (620, 900)
+MIN_BAND_LEAVES = 6
+BAND_GAP = 0.12
+#: The height a leaf joined to no stacked tree takes, against 1 for one that is
+UNJOINED_LEAF_WEIGHT = 0.15
+#: A leaf's point, and the larger triangle of a leaf standing for a collapsed clade
+LEAF_MARKER_PX = 7
+COLLAPSED_MARKER_PX = 11
 
 
 class Phylogeny:
     """
-    Helper object used to coordinate a phylogeny.
+    Helper object used to coordinate a phylogeny of genomes.
+
+    NCBI publishes many assemblies under both a GCA_ (GenBank) and a GCF_
+    (RefSeq) accession, and a pangenome built from both carries each such
+    genome twice: two identical leaves. The GenBank copy is pruned on
+    construction, so every tree drawn shows each genome once.
     """
     name: str
     tree: Tree
-    distances: Dict[str, Dict[str, float]]
+    #: Leaves standing for a clade collapsed by ``subtree``, and the leaves it held
+    collapsed: Dict[str, List[str]]
 
-    def __init__(
-        self,
-        name: str,
-        tree: Tree,
-        distances: pd.DataFrame | None = None,
-    ) -> None:
+    def __init__(self, name: str, tree: Tree) -> None:
         self.name = name
         self.tree = tree
-        terminals = self.tree.get_terminals()
-
-        if distances is None:
-            self.distances = {
-                n1.name: {
-                    n2.name: self.tree.distance(n1, n2)
-                    for n2 in terminals
-                }
-                for n1 in terminals
-            }
-
-        else:
-            self.distances = {
-                n: r.to_dict()
-                for n, r in distances.iterrows()
-            }
+        self.collapsed = {}
+        leaves = {leaf.name: leaf for leaf in self.tree.get_terminals()}
+        for leaf in sorted(genbank_duplicates(leaves)):
+            self.tree.prune(leaves[leaf])
 
         # Find the coordinates
         self.find_coords()
@@ -60,15 +58,24 @@ class Phylogeny:
         self.children = {}
         self._get_children(self.tree.clade)
 
-    def find_coords(self, scale: float = 1.0) -> None:
-
+    def find_coords(self, scale: float = 1.0, weights: Dict[str, float] | None = None) -> None:
+        """
+        Place every node. Each leaf takes a share of the height in proportion
+        to its weight in ``weights``, 1 where it has none, so that leaves of
+        less interest can be packed closer; ``span`` is the height taken.
+        """
         # Get the X-Y position of each node (framing the whole tree from 0-1)
         self.coords = {}
+        self._weights = weights or {}
 
         self._clade_ix = 0
 
         # Start at the root
-        self._add_coord(self.tree.clade, -0.5, (self.n_leaves * scale) - 0.5)
+        self.span = self._weight(self.tree.clade) * scale
+        self._add_coord(self.tree.clade, -0.5, self.span - 0.5)
+
+    def _weight(self, clade: Clade) -> float:
+        return sum(self._weights.get(leaf.name, 1.0) for leaf in clade.get_terminals())
 
     def _add_coord(self, clade: Clade, start: float, stop: float) -> None:
 
@@ -82,13 +89,13 @@ class Phylogeny:
             y=np.mean([start, stop])
 
         # An internal node sits at the mean of its children, each of which
-        # takes a share of the span proportional to its leaves
+        # takes a share of the span proportional to its leaves' weight
         else:
             span = stop - start
             previous_y = start
             child_ys = []
             for child in clade.clades:
-                new_y = previous_y + (span * len(child.get_terminals()) / len(clade.get_terminals()))
+                new_y = previous_y + (span * self._weight(child) / self._weight(clade))
 
                 self._add_coord(
                     child,
@@ -153,6 +160,42 @@ class Phylogeny:
             row=row,
             col=col
         )
+
+    def plot_leaf_groups(
+        self, fig, groups: Dict[str, str], colors: Dict[str, str], row=1, col=1, showlegend=False,
+    ):
+        """
+        Each leaf as a point in the color of its group in ``groups``, one trace
+        and legend entry per group. A leaf standing for a collapsed clade is a
+        triangle, labeled with how many genomes it holds.
+        """
+        leaves = self.leaves_list
+        for group, color in colors.items():
+            members = [leaf for leaf in leaves if groups.get(leaf) == group]
+            if not members:
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=[self.coords[leaf]["x"] for leaf in members],
+                    y=[self.coords[leaf]["y"] for leaf in members],
+                    text=[str(len(self.collapsed[leaf])) if leaf in self.collapsed else "" for leaf in members],
+                    hovertext=members,
+                    mode="markers+text",
+                    textposition="middle right",
+                    textfont=dict(size=10, color="#444444"),
+                    name=group,
+                    legendgroup=group,
+                    showlegend=showlegend,
+                    marker=dict(
+                        color=color,
+                        size=[COLLAPSED_MARKER_PX if leaf in self.collapsed else LEAF_MARKER_PX for leaf in members],
+                        symbol=["triangle-left" if leaf in self.collapsed else "circle" for leaf in members],
+                    ),
+                    cliponaxis=False,
+                ),
+                row=row,
+                col=col,
+            )
 
     def _get_coord(self, kw: str):
         """Get a particular value for every item in the tree."""
@@ -313,6 +356,134 @@ class Phylogeny:
         return fig
 
 
+    def subtree(self, leaves: Iterable[str], collapse_others: bool = False) -> 'Phylogeny':
+        """
+        The clade at the most recent common ancestor of ``leaves``, as a tree
+        of its own. It takes that clade from this tree rather than a copy,
+        which for a tree of hundreds of leaves exceeds the recursion limit,
+        so this tree should not be drawn afterward.
+
+        With ``collapse_others``, every largest clade holding none of
+        ``leaves`` becomes one leaf, at its leaves' mean depth, named for how
+        many genomes it holds; ``collapsed`` maps each such leaf to them.
+        """
+        leaves = set(leaves)
+        clade = self.tree.common_ancestor(sorted(leaves))
+        # The clade's own branch is not part of it
+        clade.branch_length = 0.0
+        collapsed = {}
+        if collapse_others:
+            stack = [clade]
+            while stack:
+                node = stack.pop()
+                for i, child in enumerate(node.clades):
+                    members = sorted(leaf.name for leaf in child.get_terminals())
+                    if len(members) > 1 and leaves.isdisjoint(members):
+                        depths = child.depths()
+                        name = f"{len(members)} genomes ({len(collapsed) + 1})"
+                        node.clades[i] = Clade(
+                            branch_length=float(np.mean([depths[leaf] for leaf in child.get_terminals()])),
+                            name=name,
+                        )
+                        collapsed[name] = members
+                    elif not child.is_terminal():
+                        stack.append(child)
+        phylogeny = Phylogeny(self.name, Tree(root=clade, rooted=True))
+        phylogeny.collapsed = collapsed
+        return phylogeny
+
+    def compare_several(
+        self,
+        comps: List['Phylogeny'],
+        leaf_groups: Dict[str, str],
+        group_colors: Dict[str, str],
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        Several tanglegrams sharing one tree: this tree on the left, drawn once,
+        and each of ``comps`` stacked on the right in a band as tall as its
+        leaves need, its leaves reordered to follow this tree and joined to it.
+        Leaves on both sides take the color of their group in ``leaf_groups``
+        (a species, say), in the colors and legend order of ``group_colors``.
+        Leaves of this tree in none of ``comps`` take a fraction of the
+        height (``UNJOINED_LEAF_WEIGHT``), so a tree of hundreds gives the
+        joined ones room while still showing how many there are.
+        Each of ``comps`` keeps its own distance axis: trees of different bins
+        can differ in depth tenfold.
+        """
+        for comp in comps:
+            if len(set(self.leaves_list) & set(comp.leaves_list)) < 3:
+                raise ValueError(f"{comp.name} shares fewer than three genomes with {self.name}")
+            comp.align_trees(self)
+            comp.find_coords()
+        # Leaves in none of comps are packed closer, so the shared ones have room
+        joined = set().union(*(c.leaves_list for c in comps)) | set(self.collapsed)
+        self.find_coords(weights={
+            leaf: 1.0 if leaf in joined else UNJOINED_LEAF_WEIGHT for leaf in self.leaves_list
+        })
+
+        n = len(comps)
+        fig = make_subplots(
+            rows=n,
+            cols=3,
+            specs=[[{"rowspan": n}, {"rowspan": n}, {}]] + [[None, None, {}] for _ in range(n - 1)],
+            column_widths=[2, 1, 1.4],
+            row_heights=[max(comp.n_leaves, MIN_BAND_LEAVES) for comp in comps],
+            horizontal_spacing=0.,
+            vertical_spacing=BAND_GAP,
+            subplot_titles=[self.name, "", *(comp.name for comp in comps)],
+        )
+        leaves = self.span
+        self.plot_lines(fig)
+        self.plot_leaf_groups(fig, leaf_groups, group_colors, showlegend=True)
+        self._plot_tracer(fig, sorted(set(self.leaves_list) & set().union(*(c.leaves_list for c in comps))))
+        fig.update_yaxes(range=[-0.5, leaves - 0.5], row=1, col=1)
+        fig.update_yaxes(range=[-0.5, leaves - 0.5], row=1, col=2)
+        fig.update_xaxes(range=[0, 1], row=1, col=2)
+
+        # The joining lines run in the middle column, on this tree's scale; a
+        # stacked tree's leaf is carried there through its band's place on the page
+        middle = fig.layout[fig.get_subplot(1, 2).yaxis.plotly_name].domain
+        for row, comp in enumerate(comps, start=1):
+            comp.plot_lines(fig, row=row, col=3)
+            comp.plot_leaf_groups(fig, leaf_groups, group_colors, row=row, col=3)
+            shared = sorted(set(self.leaves_list) & set(comp.leaves_list))
+            comp._plot_tracer(fig, shared, row=row, col=3)
+            fig.update_yaxes(range=[-0.5, comp.n_leaves - 0.5], row=row, col=3)
+            band = fig.layout[fig.get_subplot(row, 3).yaxis.plotly_name].domain
+            for leaf in shared:
+                page = band[0] + (comp.coords[leaf]["y"] + 0.5) / comp.n_leaves * (band[1] - band[0])
+                fig.add_trace(
+                    go.Scatter(
+                        x=[0, 1],
+                        y=[self.coords[leaf]["y"], (page - middle[0]) / (middle[1] - middle[0]) * leaves - 0.5],
+                        mode="lines",
+                        showlegend=False,
+                        line=dict(dash="dot", color="#b0b0b0", width=1),
+                        cliponaxis=False,
+                    ),
+                    row=1,
+                    col=2,
+                )
+
+        snp_rate_axis = dict(automargin=True, exponentformat="power", nticks=3)
+        fig.update_yaxes(visible=False)
+        fig.update_xaxes(visible=False, row=1, col=2)
+        fig.update_xaxes(**snp_rate_axis, title_text="SNP rate", row=1, col=1)
+        for row in range(1, n + 1):
+            fig.update_xaxes(**snp_rate_axis, autorange="reversed", row=row, col=3)
+        fig.update_xaxes(title_text="SNP rate", row=n, col=3)
+        width, height = SEVERAL_TANGLEGRAM_SIZE
+        fig.update_layout(
+            template=SIMPLE_TEMPLATE,
+            width=width,
+            height=height,
+            margin=dict(l=40, r=30, b=70, t=90),
+            legend=dict(TOP_LEGEND, yref="container", y=1.0, yanchor="top"),
+        )
+        save_image(fig, file_prefix)
+        return fig
+
     def _get_leafs(self, node: Tree):
         return [leaf.name for leaf in node.get_terminals()]
 
@@ -331,17 +502,6 @@ class Phylogeny:
                     newick,
                 )
         return newick
-    def dedup_refseq(self) -> None:
-        """
-        Drop the GenBank copy of any assembly that is also present as RefSeq.
-
-        NCBI publishes the same assembly under both a GCA_ (GenBank) and a
-        GCF_ (RefSeq) accession; a pangenome built from both ends up with two
-        identical leaves, which clutters a tanglegram.
-        """
-        leaves = {leaf.name: leaf for leaf in self.tree.get_terminals()}
-        for name in genbank_duplicates(leaves):
-            self.tree.prune(leaves[name])
 
 
 def _newick_safe(name: str) -> str:

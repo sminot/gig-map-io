@@ -59,6 +59,8 @@ MAP_MAX_WIDTH_IN = 6.5
 #: A gene map's width per gene drawn, and what it needs besides, in inches
 GENE_MAP_IN_PER_GENE = 0.2
 GENE_MAP_BASE_IN = 0.6
+#: Length of the end ticks of a gene map's scale bar, as a fraction of matplotlib's default
+SCALE_BAR_TICK = 0.4
 #: A gene and context map draw the largest run of a bin's genes with no gap
 #: between neighbors over this many bp. At 20 kb, Alistipes Bin 100 split
 #: over a 22 kb gap into two runs of one locus
@@ -731,7 +733,7 @@ class Pangenome(Dataset):
 
         The genes are those of the context map's window, placed as it places
         them (``_bin_window``), and a footnote says how many of the bin's
-        genes lie elsewhere. With a ``file_prefix`` the coordinates of the
+        genes lie elsewhere, or that none do. With a ``file_prefix`` the coordinates of the
         genes drawn are also written as CSV.
         """
         n_genes = int(self.bin_size[bin])
@@ -770,12 +772,13 @@ class Pangenome(Dataset):
         # The vertial lines work with an increment scaled to the text offset
         vertical_increment = text_offset / 10.
 
-        # Draw a line underneath the entire gene map
+        # Draw a line underneath the entire gene map, its end ticks short
+        # enough to stay clear of the genes above it
         ax.annotate(
             '',
             xytext=(0, -4 * vertical_increment),
             xy=(1, -4 * vertical_increment),
-            arrowprops=dict(arrowstyle="|-|")
+            arrowprops=dict(arrowstyle=f"|-|, widthA={SCALE_BAR_TICK}, widthB={SCALE_BAR_TICK}")
         )
 
         # Write the size underneath
@@ -798,9 +801,11 @@ class Pangenome(Dataset):
             notes.append(f"{n_genes - len(coords)} of the bin's {n_genes} genes lie outside this map.")
         if n_unlabeled:
             notes.append(unlabeled_note(n_unlabeled))
-        if notes:
-            ax.text(0.5, -1.1 * text_offset, "\n".join(notes), fontsize=font_size - 1, color="#555555",
-                    horizontalalignment="center", verticalalignment="top")
+        if not notes:
+            # Says the map is complete, and keeps maps side by side on one baseline
+            notes.append(f"All {n_genes} of the bin's genes are on this map.")
+        ax.text(0.5, -1.1 * text_offset, "\n".join(notes), fontsize=font_size - 1, color="#555555",
+                horizontalalignment="center", verticalalignment="top")
 
         ax.axis("off")
 
@@ -1229,10 +1234,4 @@ class Pangenome(Dataset):
             cache_file.parent.mkdir(exist_ok=True, parents=True)
             Phylo.write(tree, cache_file, "newick")
 
-        distances = pd.DataFrame(dm.matrix, index=dm.names, columns=dm.names)
-
-        return Phylogeny(
-            name="ANI",
-            tree=tree,
-            distances=distances
-        )
+        return Phylogeny(name="ANI", tree=tree)
