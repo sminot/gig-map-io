@@ -302,7 +302,8 @@ class ContrastMetagenomesSet(DatasetDict):
         else:
             # Two figures of the same width, margins and columns, so that,
             # drawn one above the other at the same width, their bins line up.
-            # The bins are named once, beneath the correlation
+            # The bins are named once, beneath the correlation, and need no
+            # axis title there: the names say what they are
             fig = make_subplots(
                 rows=1, cols=rpkm_col, shared_yaxes=annotations is not None,
                 column_widths=column_widths, horizontal_spacing=0.02,
@@ -313,12 +314,13 @@ class ContrastMetagenomesSet(DatasetDict):
                 column_widths=column_widths, horizontal_spacing=0.02,
             )
             correlation_fig.add_trace(correlation.update(colorbar_len=1.0), row=1, col=rpkm_col)
+            correlation_margin = dict(margin, t=HEATMAP_GAP_PX, b=margin["b"] - AXIS_TITLE_PX)
             correlation_fig.update_layout(
                 width=width,
-                height=int(HEATMAP_GAP_PX + margin["b"] + bins_px),
+                height=int(correlation_margin["t"] + correlation_margin["b"] + bins_px),
                 template=TEMPLATE,
                 showlegend=False,
-                margin=dict(margin, t=HEATMAP_GAP_PX),
+                margin=correlation_margin,
             )
             correlation_row = 1
             height = height or int(margin["t"] + HEATMAP_GAP_PX + ABUNDANCE_PANEL_PX)
@@ -364,7 +366,8 @@ class ContrastMetagenomesSet(DatasetDict):
         )
         fig.update_yaxes(title_text="Samples", row=1, col=1)
         correlation_fig.update_yaxes(title_text="Pangenome bin", showticklabels=False, ticks="", row=correlation_row, col=rpkm_col)
-        correlation_fig.update_xaxes(title_text="Pangenome bin", row=correlation_row, col=rpkm_col)
+        if correlation_prefix is None:
+            correlation_fig.update_xaxes(title_text="Pangenome bin", row=correlation_row, col=rpkm_col)
         fig.update_xaxes(showticklabels=False, ticks="", row=1, col=rpkm_col)
         fig.update_yaxes(showticklabels=False, ticks="", row=1, col=rpkm_col)
         save_image(fig, file_prefix)
@@ -704,6 +707,8 @@ class ContrastMetagenomesSet(DatasetDict):
 #: panel, in px, and the width of one character of a bin label at 13 px
 ABUNDANCE_PANEL_PX = 300
 HEATMAP_GAP_PX = 30
+#: Room an axis title takes beneath its tick labels
+AXIS_TITLE_PX = 25
 LABEL_CHAR_PX = 6
 
 

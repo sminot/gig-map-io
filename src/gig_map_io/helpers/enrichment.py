@@ -206,7 +206,7 @@ def plot_enrichment(
         fig.update_xaxes(range=[min(0.0, float(np.nanmin(df["log2_odds_ratio"]))), upper * 1.45], row=1, col=2)
 
     longest = max((len(line) for name in df[label] for line in str(name).split("<br>")), default=0)
-    top = 50 if show_legend else 30
+    top = 50 if show_legend else 15
     fig.update_layout(
         width=width if width is not None else int(np.clip(
             PANELS_PX + LABEL_CHAR_PX * longest, MIN_WIDTH, MAX_WIDTH,

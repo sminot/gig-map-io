@@ -589,7 +589,9 @@ class StudySet:
 
         n_bins = len(index)
         rows_px = max(MIN_BOXPLOT_PLOT_PX, BOXPLOT_ROW_PX * n_bins + BOXPLOT_ROW_GAP_PX * (n_bins - 1))
-        top, bottom = 60, 95
+        # The bottom margin is grown by plotly to fit the tilted cohort names;
+        # set larger, it leaves empty space beneath them
+        top, bottom = 60, 10
         fig = px.box(
             data_frame=pd.concat(panels),
             x="Cohort",
