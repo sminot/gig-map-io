@@ -44,6 +44,10 @@ BIN_OUTLINE = "#111111"
 #: labels; the room the kb axis takes below the rows; and the footnote's
 #: distance from the bottom edge
 ROW_HEIGHT_IN = 0.22
+#: The most the rows take, in inches, before they are packed closer, and the
+#: closest they are packed: a 7 pt row label is about 0.1 in tall
+MAX_ROWS_IN = 4.0
+MIN_ROW_HEIGHT_IN = 0.11
 TOP_PAD_IN = 0.05
 AXIS_IN = 0.4
 FOOTNOTE_PAD_IN = 0.03
@@ -172,7 +176,6 @@ def plot_gene_context(
     width: float,
     font_size: float,
     note: str | None = None,
-    row_height: float = ROW_HEIGHT_IN,
 ) -> plt.Figure:
     """
     Draw the context map.
@@ -197,12 +200,11 @@ def plot_gene_context(
         A line for the footnote above the key to the colors, such as how many
         of the bin's genes lie outside the window. Like every figure here
         the map has no title.
-    row_height:
-        Inches per genome; less than the default packs a map of many genomes
-        onto one page.
     """
     lo, hi = window
     n_rows = len(rows)
+    # A map of many genomes packs its rows closer, so that it stays a page tall
+    row_height = min(ROW_HEIGHT_IN, max(MIN_ROW_HEIGHT_IN, MAX_ROWS_IN / n_rows))
     rows_height = row_height * n_rows + 0.55
     # The height is a placeholder until the labels are drawn and measured
     fig = plt.figure(figsize=(width, 1.0))

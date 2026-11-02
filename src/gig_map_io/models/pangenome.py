@@ -20,7 +20,7 @@ from ..helpers.clustering import linkage_order
 from ..helpers.save_image import save_image
 from ..helpers.style import PRIMARY, SIMPLE_TEMPLATE, TEMPLATE
 from ..helpers.coords import Coords
-from ..helpers.gene_context import ROW_HEIGHT_IN, draw_gene_labels, order_rows, plot_gene_context, unlabeled_note
+from ..helpers.gene_context import draw_gene_labels, order_rows, plot_gene_context, unlabeled_note
 from ..helpers.genomes import genbank_duplicates
 from .dataset import Dataset
 from ..helpers.phylogeny import Phylogeny
@@ -309,26 +309,6 @@ class Pangenome(Dataset):
             )
             .fillna(0)
         )
-
-    def merge_bins(self, bins: List[str], name: str) -> "Pangenome":
-        """
-        This pangenome with ``bins`` taken as one bin called ``name``, so that
-        ``bin_gene_map`` and ``bin_context_map`` draw bins whose genes sit
-        together as one. The genes of every bin after the first are labeled
-        with their bin, as in "Bin 251: ParA family protein".
-        """
-        gene_bins = self.gene_bins.copy()
-        later = gene_bins["bin"].isin(bins[1:])
-        gene_bins.loc[later, "gene_label"] = (
-            gene_bins.loc[later, "gene_id"] + " - "
-            + gene_bins.loc[later, "bin"] + ": " + gene_bins.loc[later, "combined_name"]
-        )
-        gene_bins.loc[gene_bins["bin"].isin(bins), "bin"] = name
-        merged = Pangenome(self.directory)
-        # align_genomes and bin_size, which the maps read, follow gene_bins;
-        # genome_content, read from its own file, keeps the bins apart
-        merged.__dict__["gene_bins"] = gene_bins
-        return merged
 
     @cached_property
     def bin_size(self) -> pd.DataFrame:
@@ -742,7 +722,6 @@ class Pangenome(Dataset):
         text_offset = 0.025,
         font_size: float = 7.0,
         label: str | None = None,
-        footnote_lines: int = 1,
         file_prefix: str | None = None
     ) -> plt.Figure:
         """
@@ -760,9 +739,6 @@ class Pangenome(Dataset):
         genes lie elsewhere, or that none do. ``label``, such as the organism
         and bin, is set beneath the footnote to name the map where several
         stand side by side; mathtext italicizes, as in ``$\\it{Alistipes}$``.
-        The label sits below ``footnote_lines`` lines of footnote however many
-        the footnote takes, so that labeled maps side by side, given the most
-        any of them needs, keep their genes on one baseline.
         With a ``file_prefix`` the coordinates of the genes drawn are also
         written as CSV.
         """
@@ -840,7 +816,7 @@ class Pangenome(Dataset):
             # Anchored below the axes, where an annotation is clipped by default
             ax.annotate(
                 label, xy=(0.5, -1.1 * text_offset), xycoords="data", annotation_clip=False,
-                xytext=(0, -(max(len(notes), footnote_lines) * LINE_SPACING + 0.6) * (font_size - 1)),
+                xytext=(0, -(len(notes) * LINE_SPACING + 0.6) * (font_size - 1)),
                 textcoords="offset points",
                 fontsize=font_size, horizontalalignment="center", verticalalignment="top",
             )
@@ -858,7 +834,7 @@ class Pangenome(Dataset):
     def bin_context_map(
         self,
         bin: str,
-        n_genomes: int | None = 10,
+        n_genomes: int = 50,
         flank: int = 8000,
         max_gap: int = BIN_WINDOW_MAX_GAP,
         min_bin_fraction: float = 0.5,
@@ -866,7 +842,6 @@ class Pangenome(Dataset):
         min_flank_fraction: float = 0.5,
         width: float = MAP_MAX_WIDTH_IN,
         font_size: float = 7.0,
-        row_height: float = ROW_HEIGHT_IN,
         remove_gene_id: bool = True,
         remove_org_tag: bool = True,
         genome_names: Dict[str, str] | None = None,
@@ -880,7 +855,7 @@ class Pangenome(Dataset):
         Contigs carrying at least ``min_bin_fraction`` of the bin's genes are
         placed in one coordinate space, and the ``n_genomes`` whose contigs
         span most of the window -- the bin plus ``flank`` bp either side --
-        are shown (``None`` for every genome with such a contig), one contig per genome, with the GenBank copy of an
+        are shown, one contig per genome, with the GenBank copy of an
         assembly also present as RefSeq dropped. Rows are ordered by
         clustering on the genes they carry. With a ``file_prefix`` the genes
         of every row are also written as CSV.
@@ -906,9 +881,9 @@ class Pangenome(Dataset):
         A bin's genes need not sit together: the window covers the largest
         run of them with no gap over ``max_gap`` bp (``_bin_window``, shared
         with the gene map), and the footnote says how many lie elsewhere.
-        ``row_height`` is the inches per row. ``genome_names`` labels the rows
-        (keyed by the genome's file name, as in ``helpers.ncbi.genome_names``);
-        a genome it does not name is labeled by its accession.
+        ``genome_names`` labels the rows (keyed by the genome's file name, as
+        in ``helpers.ncbi.genome_names``); a genome it does not name is
+        labeled by its accession.
         """
         aln = self.align_genomes
         n_bin_genes = int(self.bin_size[bin])
@@ -967,7 +942,7 @@ class Pangenome(Dataset):
         for row in candidates:
             if row["genome"] not in seen:
                 chosen.append(row); seen.add(row["genome"])
-            if n_genomes is not None and len(chosen) == n_genomes:
+            if len(chosen) == n_genomes:
                 break
 
         # Every gene on each chosen contig, mapped into the shared space
@@ -1009,7 +984,6 @@ class Pangenome(Dataset):
             width=width,
             font_size=font_size,
             note=f"{n_elsewhere} of the bin's {n_bin_genes} genes lie outside this window." if n_elsewhere else None,
-            row_height=row_height,
         )
         save_image(fig, file_prefix)
         if file_prefix is not None:
