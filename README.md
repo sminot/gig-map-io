@@ -127,7 +127,7 @@ labels:
 ibd = Study.from_json("studies/ibd_combined.json")
 
 study.compare_sig_scatter(ibd, file_prefix="out/scatter")
-study.compare_sig_categories(ibd, file_prefix="out/categories")
+study.compare_sig_categories(ibd, file_prefix="out/categories")  # also out/categories.csv, the test
 study.compare_sig_heatmap(ibd, file_prefix="out/categories_heatmap")
 study.compare_volcano_with_estimate(ibd, file_prefix="out/joint_volcano")
 ```
@@ -177,6 +177,11 @@ study = script.study("gvhd_combined")
 bins = pd.read_csv(script.input("bins"), index_col=[0, 1])
 study.bin_abundance_heatmap(bins.index, file_prefix=script.output("figure"))
 ```
+
+`bin_abundance_heatmap` draws the bins' correlation beneath their abundance;
+given `correlation_prefix` it writes the correlation as a figure of its own
+instead, at the same width and with the same columns, so the two stacked as
+separate panels still line up bin for bin.
 
 It exposes `--datasets`, `--studies`, `--output-dir`, and one option per
 declared input, each defaulting to where that thing sits in a checkout.
@@ -231,7 +236,10 @@ the data region's shrinkage. A panel may carry its own
 region that height over width (measured from a trial render, since margins
 grow to fit legends and long titles), `plot_height_mm` to give its data
 region that height, measured the same way, and `"legend": false` to drop
-its legend where another panel's already names the same traces. A PDF with no
+its legend where another panel's already names the same traces. A cell may
+hold `{"stack": [...], "span": n}` instead of one panel: its panels drawn one
+above another at the cell's width and lettered in turn, so that one tall
+panel can run beside several shorter ones. A PDF with no
 specification beside it, such as a matplotlib figure drawn in inches, is placed
 as it is. Either way the content stays vector.
 

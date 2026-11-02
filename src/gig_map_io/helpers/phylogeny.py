@@ -285,7 +285,9 @@ class Phylogeny:
         snp_rate_axis = dict(
             automargin=True,
             title_text="SNP rate",
-            exponentformat="power"
+            exponentformat="power",
+            # Few enough to stay level under half of a printed tanglegram
+            nticks=4,
         )
         margin = dict(l=50, r=30, b=70, t=60)
 

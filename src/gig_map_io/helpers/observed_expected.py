@@ -26,8 +26,14 @@ from .style import PRIMARY, SIMPLE_TEMPLATE, TEMPLATE, TOP_LEGEND
 
 EXPECTED_COLOR = "#c3cedb"
 
-#: Height of one line of caption beneath the plot
-CAPTION_LINE_PX = 18
+#: Where the tick labels' lines sit beneath the axis, and the width of one
+#: character of the names set beside them
+TICK_LINE_FIRST_PX = 17
+TICK_LINE_PX = 17
+CHARACTER_PX = 6.5
+#: A group heading longer than this many characters per tick under it breaks
+#: over two lines
+HEADING_CHARS_PER_TICK = 6
 
 #: Width given to each tick's pair of bars, along one axis and in a faceted
 #: row, which holds fewer pairs and so can give each one more room
@@ -38,12 +44,15 @@ IN_LINE_PLOT_PX = 300
 FACETED_ROW_PX = 110
 #: Gap between faceted rows, which holds the label of the row below it
 ROW_GAP_PX = 34
-#: Room for the legend above the plot and the caption beneath it
+#: Room for the legend above the plot
 MIN_WIDTH = 420
 
 #: The heatmap's color scale runs from 1/2^limit to 2^limit times expected, the
 #: same for every table, so that a color means the same in each
 HEATMAP_LOG2_LIMIT = 2
+#: Length of the heatmap's color scale, and the band above the grid it sits in
+COLORBAR_PX = 150
+COLORBAR_BAND_PX = 70
 
 #: Below this expected count a fold change says more about rounding than about
 #: the data, and the chi-squared approximation is unreliable
@@ -97,7 +106,7 @@ def plot_observed_expected(
     observed: Sequence[float],
     expected: Sequence[float],
     y_title: str,
-    caption: str | None = None,
+    tick_rows: Sequence[str] | None = None,
     facet_groups: bool = False,
     width: int | None = None,
     height: int | None = None,
@@ -113,9 +122,12 @@ def plot_observed_expected(
     that the bars line up vertically.
 
     A fold change is printed over each pair whose expected count reaches
-    ``MIN_EXPECTED_TO_LABEL``. Like every figure here it has no title; the
-    test result and anything else a reader needs go in ``caption``, which may
-    run to several lines (``<br>``) beneath the plot.
+    ``MIN_EXPECTED_TO_LABEL``. Like every figure here it has no title, and
+    the test behind it belongs in the text rather than beneath the plot.
+
+    ``tick_rows`` names the lines of tick labels that run over several
+    (``<br>``), one name per line, set to their left: which study each row
+    of arrows is.
 
     The size follows the number of ticks and rows unless ``width`` and
     ``height`` are given.
@@ -123,8 +135,10 @@ def plot_observed_expected(
     if not (len(ticks) == len(groups) == len(observed) == len(expected)):
         raise ValueError("ticks, groups, observed and expected must be the same length")
     observed, expected = list(observed), list(expected)
-    draw = _plot_faceted if facet_groups else _plot_in_line
-    fig = draw(list(ticks), list(groups), observed, expected, y_title, caption, width, height)
+    if facet_groups:
+        fig = _plot_faceted(list(ticks), list(groups), observed, expected, y_title, width, height)
+    else:
+        fig = _plot_in_line(list(ticks), list(groups), observed, expected, y_title, tick_rows, width, height)
     save_image(fig, file_prefix)
     return fig
 
@@ -151,17 +165,16 @@ def _label_fold_change(fig: go.Figure, x, observed: float, expected: float, row:
 
 
 def _finish(
-    fig: go.Figure, y_title: str, caption: str | None,
+    fig: go.Figure, y_title: str,
     width: int | None, height: int | None, plot_width: int, plot_height: int,
-    margin: dict, y_title_shift: int, caption_shift: int,
+    margin: dict, y_title_shift: int,
 ) -> None:
     """
-    The size, legend, margins, one y-axis title for every panel, and the
-    caption. ``plot_width`` and ``plot_height`` size the data region when
-    ``width`` or ``height`` is not given.
+    The size, legend, margins, and one y-axis title for every panel.
+    ``plot_width`` and ``plot_height`` size the data region when ``width``
+    or ``height`` is not given.
     """
-    caption_lines = caption.count("<br>") + 1 if caption else 0
-    margin = dict(margin, t=margin.get("t", 50), b=margin["b"] + CAPTION_LINE_PX * caption_lines)
+    margin = dict(margin, t=margin.get("t", 50))
     fig.update_layout(
         template=TEMPLATE,
         width=width or max(MIN_WIDTH, margin["l"] + margin["r"] + plot_width),
@@ -177,14 +190,9 @@ def _finish(
         x=0, xref="paper", y=0.5, yref="paper", xshift=y_title_shift, textangle=-90,
         text=y_title, showarrow=False, font=dict(size=14, color="#222222"),
     )
-    if caption:
-        fig.add_annotation(
-            x=0.5, xref="paper", y=0, yref="paper", yshift=caption_shift, xanchor="center",
-            yanchor="top", showarrow=False, font=dict(size=11, color="#555555"), text=caption,
-        )
 
 
-def _plot_in_line(ticks, groups, observed, expected, y_title, caption, width, height) -> go.Figure:
+def _plot_in_line(ticks, groups, observed, expected, y_title, tick_rows, width, height) -> go.Figure:
     """Every category along one axis, with group headings beneath and an axis break where the counts demand it."""
     # Positions, not the tick strings themselves: a categorical axis collapses
     # repeated labels onto one position, and the same label can legitimately
@@ -233,23 +241,38 @@ def _plot_in_line(ticks, groups, observed, expected, y_title, caption, width, he
     start = 0
     for i in range(1, len(groups) + 1):
         if i == len(groups) or groups[i] != groups[start]:
+            heading = groups[start]
+            # Printed at half a page, a heading over few ticks meets its neighbor
+            if len(heading) > HEADING_CHARS_PER_TICK * (i - start):
+                heading = _two_lines(heading)
             fig.add_annotation(
-                x=(start + i - 1) / 2, y=0, yref="paper", text=f"<b>{groups[start]}</b>",
-                showarrow=False, yshift=-62, xanchor="center",
+                x=(start + i - 1) / 2, y=0, yref="paper", text=f"<b>{heading}</b>",
+                showarrow=False, yshift=-55, xanchor="center", yanchor="top",
                 font=dict(size=11, color="#333333"),
             )
             start = i
 
+    # Each line of the tick labels named to its left, right-aligned against
+    # the axis, the left margin widened to hold the longest name
+    margin_left = 85
+    for line, name in enumerate(tick_rows or []):
+        fig.add_annotation(
+            x=0, xref="paper", y=0, yref="paper", xanchor="right", xshift=-8,
+            yshift=-TICK_LINE_FIRST_PX - TICK_LINE_PX * line, yanchor="middle",
+            text=name, showarrow=False, font=dict(size=11, color="#333333"),
+        )
+        margin_left = max(margin_left, int(CHARACTER_PX * len(name)) + 20)
+
     fig.update_yaxes(title_text="", row=rows, col=1)
     _finish(
-        fig, y_title, caption, width, height,
+        fig, y_title, width, height,
         plot_width=IN_LINE_TICK_PX * len(ticks), plot_height=IN_LINE_PLOT_PX,
-        margin=dict(b=100, l=85, r=30), y_title_shift=-68, caption_shift=-82,
+        margin=dict(b=98, l=margin_left, r=30), y_title_shift=-68,
     )
     return fig
 
 
-def _plot_faceted(ticks, groups, observed, expected, y_title, caption, width, height) -> go.Figure:
+def _plot_faceted(ticks, groups, observed, expected, y_title, width, height) -> go.Figure:
     """
     One row per group, each labeled above it.
 
@@ -292,10 +315,10 @@ def _plot_faceted(ticks, groups, observed, expected, y_title, caption, width, he
     fig.update_xaxes(ticks="outside", row=len(order), col=1)
     widest_row = max(groups.count(group) for group in order)
     _finish(
-        fig, y_title, caption, width, height,
+        fig, y_title, width, height,
         plot_width=FACETED_TICK_PX * widest_row,
         plot_height=len(order) * FACETED_ROW_PX + (len(order) - 1) * ROW_GAP_PX,
-        margin=dict(b=55, l=72, r=20, t=50 + ROW_GAP_PX), y_title_shift=-58, caption_shift=-40,
+        margin=dict(b=55, l=72, r=20, t=50 + ROW_GAP_PX), y_title_shift=-58,
     )
     return fig
 
@@ -305,7 +328,6 @@ def plot_observed_expected_heatmap(
     expected: pd.DataFrame,
     x_title: str,
     y_title: str,
-    caption: str,
     width: int,
     height: int,
     file_prefix: str | None = None,
@@ -315,8 +337,15 @@ def plot_observed_expected_heatmap(
     first at the bottom) and its columns across: each cell colored by how
     many times more (warm) or fewer (cool) counts it holds than ``expected``,
     on a log scale centered on 1x, and labeled with its observed and expected
-    counts. ``caption`` goes beneath, one line per ``<br>``.
+    counts.
+
+    The color scale runs across the top, where the paired bars put their
+    legend, and labels of several words break over two lines: beside the
+    paired bars the grid gets half a page, and a scale or a label down the
+    side takes the width its cells' text needs.
     """
+    observed = observed.rename(index=_two_lines, columns=_two_lines)
+    expected = expected.rename(index=_two_lines, columns=_two_lines)
     with np.errstate(divide="ignore", invalid="ignore"):
         log_fold = np.log2(observed / expected.where(expected > 0))
     # A cell beyond the scale, or empty where some were expected, sits at its
@@ -326,10 +355,11 @@ def plot_observed_expected_heatmap(
     fig = go.Figure(go.Heatmap(
         z=z.values, x=list(observed.columns), y=list(observed.index),
         colorscale="RdBu_r", zmid=0, zmin=-limit, zmax=limit, xgap=2, ygap=2, hoverinfo="skip",
-        # Shorter than the plot, so that its two-line title clears the top tick
         # The title at the cells' text size: at the axis titles' it outweighs them
         colorbar=dict(
-            title=dict(text="Observed /<br>expected", font_size=12), thickness=14, len=0.8, y=0.4,
+            title=dict(text="Observed / expected", font_size=12, side="top"),
+            orientation="h", x=0.5, xanchor="center", y=1, yanchor="bottom", ypad=12,
+            thickness=10, lenmode="pixels", len=COLORBAR_PX,
             tickvals=list(range(-limit, limit + 1)),
             ticktext=[f"{2 ** v}×" if v >= 0 else f"1/{2 ** -v}×" for v in range(-limit, limit + 1)],
         ),
@@ -345,17 +375,21 @@ def plot_observed_expected_heatmap(
                 text=f"<b>{observed.loc[r, c]:,}</b><br>{expected.loc[r, c]:,.1f} expected<br>{fold}",
                 font=dict(size=12, color="#ffffff" if dark else "#1a1a1a"),
             )
-    fig.add_annotation(
-        x=0.5, xref="paper", y=0, yref="paper", yshift=-55, xanchor="center", yanchor="top",
-        showarrow=False, font=dict(size=11, color="#555555"), text=caption,
-    )
     fig.update_layout(
         template=SIMPLE_TEMPLATE, width=width, height=height,
-        # Room beneath the caption too: under an axis title its last line
-        # otherwise sits on the canvas edge
-        margin=dict(t=30, b=65 + CAPTION_LINE_PX * (caption.count("<br>") + 1)),
-        xaxis=dict(title=x_title, side="bottom", showline=False, ticks=""),
+        margin=dict(t=COLORBAR_BAND_PX, b=75),
+        # Clear of tick labels that run over two lines
+        xaxis=dict(title=dict(text=x_title, standoff=14), side="bottom", showline=False, ticks=""),
         yaxis=dict(title=y_title, showline=False, ticks=""),
     )
     save_image(fig, file_prefix)
     return fig
+
+
+def _two_lines(label: str) -> str:
+    """``label`` broken at the space nearest its middle, or as it is if it is one word."""
+    spaces = [i for i, character in enumerate(label) if character == " "]
+    if not spaces:
+        return label
+    middle = min(spaces, key=lambda i: (abs(i - len(label) / 2), i))
+    return f"{label[:middle]}<br>{label[middle + 1:]}"

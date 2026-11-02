@@ -12,7 +12,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from .dataset import Dataset
-from ..helpers.format_pvalue import format_pvalue
 from ..helpers.observed_expected import expected_counts, plot_observed_expected, plot_observed_expected_heatmap
 from .sample_group import _key as _label_key
 from ..helpers.make_lines import make_lines
@@ -458,10 +457,17 @@ class ContrastMetagenomes(Dataset):
         beside the count expected if bin presence and the metadata column were
         independent.
 
-        ``group_labels`` renames the metadata values for display.
+        ``group_labels`` renames the metadata values for display. Fisher's
+        exact test of the table is for the text, not the figure: it is
+        written to ``<file_prefix>.csv``.
         """
         result = self.bin_contingency(bin, metadata_col, norm_bin, threshold)
         table = result["table"]
+        if file_prefix is not None:
+            pd.DataFrame([dict(
+                bin=bin, normalized_by=norm_bin, threshold=result["threshold"], n=result["n"],
+                odds_ratio=result["odds_ratio"], pvalue=result["pvalue"],
+            )]).to_csv(file_prefix + ".csv", index=False)
         # Metadata values arrive as numbers while the study definition keys its
         # labels by string, so both are normalized the same way
         labels = {_label_key(k): v for k, v in (group_labels or {}).items()}
@@ -482,7 +488,6 @@ class ContrastMetagenomes(Dataset):
             observed=observed,
             expected=expected,
             y_title="Samples",
-            caption=_contingency_caption(result, bin, norm_bin),
             facet_groups=True,
             width=width,
             height=height,
@@ -504,7 +509,7 @@ class ContrastMetagenomes(Dataset):
         The 2x2 table of :meth:`plot_bin_contingency` as a grid, drawn the
         same way as the study-concordance heatmap: present above absent, the
         metadata groups across, each cell colored by observed over expected
-        and labeled with both counts. The caption carries the same test.
+        and labeled with both counts.
         """
         result = self.bin_contingency(bin, metadata_col, norm_bin, threshold)
         labels = {_label_key(k): v for k, v in (group_labels or {}).items()}
@@ -517,7 +522,6 @@ class ContrastMetagenomes(Dataset):
             result["expected"].reindex(list(rows)).rename(index=rows, columns=columns),
             x_title="",
             y_title=bin,
-            caption=_contingency_caption(result, bin, norm_bin),
             width=width,
             height=height,
             file_prefix=file_prefix,
@@ -602,13 +606,3 @@ class ContrastMetagenomes(Dataset):
             legend_above(fig)
         save_image(fig, file_prefix)
         return fig
-
-
-def _contingency_caption(result: dict, bin: str, norm_bin: str | None) -> str:
-    """What a bin-presence figure was called on, and Fisher's exact test of it."""
-    measured = f"{bin} / {norm_bin}" if norm_bin is not None else f"{bin} (RPKM)"
-    return (
-        f"Present at {measured} &#8805; {result['threshold']:g} &#183; n = {result['n']} "
-        f"<br>odds ratio {result['odds_ratio']:.2f} "
-        f"&#183; Fisher's exact p = {format_pvalue(result['pvalue'])}"
-    )

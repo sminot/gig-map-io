@@ -17,7 +17,6 @@ from scipy import stats
 from gig_map_io.helpers.clustering import linkage_order
 from gig_map_io.helpers.make_lines import make_lines
 from gig_map_io.helpers.save_image import save_image
-from gig_map_io.helpers.format_pvalue import format_pvalue
 from gig_map_io.helpers.observed_expected import (
     expected_counts, plot_observed_expected, plot_observed_expected_heatmap,
 )
@@ -200,6 +199,7 @@ class ContrastMetagenomesSet(DatasetDict):
         height: int | None = None,
         annotation_width_fraction: float = 0.1,
         file_prefix: str | None = None,
+        correlation_prefix: str | None = None,
     ) -> go.Figure:
         """
         The abundance of a set of bins across samples, log10(RPKM + 1), with
@@ -225,6 +225,12 @@ class ContrastMetagenomesSet(DatasetDict):
             first level the case-like one.
         annotation_width_fraction : float
             Fraction of the figure width given to the annotation column.
+        correlation_prefix : str, optional
+            Write the correlation as a figure of its own, under this prefix,
+            instead of beneath the abundance: the same width and columns, so
+            that the two drawn one above the other line up bin for bin, and
+            each can be a panel of its own. ``height`` is then the abundance
+            figure's alone.
         """
         rpkm = pd.DataFrame({
             f"{pangenome} / {feature}": self.contrast_metagenomes[pangenome].rpkm[feature]
@@ -253,44 +259,70 @@ class ContrastMetagenomesSet(DatasetDict):
         longest = max(len(name) for name in sorted_features)
         margin = dict(l=70, r=110, t=50, b=45 + int(LABEL_CHAR_PX * longest))
         bins_px = (width - margin["l"] - margin["r"]) * (1.0 - annotation_width_fraction if annotations is not None else 1.0)
-        if height is None:
-            height = int(margin["t"] + margin["b"] + ABUNDANCE_PANEL_PX + HEATMAP_GAP_PX + bins_px)
-        plot_height = height - margin["t"] - margin["b"]
-        row_heights = [(plot_height - HEATMAP_GAP_PX - bins_px) / plot_height, bins_px / plot_height]
-        fig = make_subplots(
-            rows=2,
-            cols=rpkm_col,
-            specs=[[{}, {}], [None, {}]] if annotations is not None else [[{}], [{}]],
-            shared_xaxes=True,
-            shared_yaxes=annotations is not None,
-            column_widths=[annotation_width_fraction, 1.0 - annotation_width_fraction] if annotations is not None else None,
-            row_heights=row_heights,
-            horizontal_spacing=0.02,
-            vertical_spacing=HEATMAP_GAP_PX / plot_height,
+        column_widths = [annotation_width_fraction, 1.0 - annotation_width_fraction] if annotations is not None else None
+        abundance = go.Heatmap(
+            z=np.log10(rpkm + 1).values,
+            x=sorted_features,
+            y=sorted_samples,
+            colorscale="Blues",
+            name="RPKM",
+            # Titles turned on end: the two bars are then the same width, so
+            # the figures keep the same margins and their bins line up
+            colorbar=dict(title=dict(text="log<sub>10</sub>(RPKM+1)", side="right"), yanchor="top", y=1.0, x=1.02, thickness=14),
         )
-        fig.add_trace(
-            go.Heatmap(
-                z=np.log10(rpkm + 1).values,
-                x=sorted_features,
-                y=sorted_samples,
-                colorscale="Blues",
-                name="RPKM",
-                colorbar=dict(title="log<sub>10</sub>(RPKM+1)", len=row_heights[0], yanchor="top", y=1.0, x=1.02, thickness=14),
-            ),
-            row=1, col=rpkm_col,
+        correlation = go.Heatmap(
+            z=corr_sorted.values,
+            x=sorted_features,
+            y=sorted_features,
+            colorscale="RdBu_r",
+            zmid=0,
+            name="Spearman r",
+            colorbar=dict(title=dict(text="Spearman r", side="right"), yanchor="bottom", y=0.0, x=1.02, thickness=14),
         )
-        fig.add_trace(
-            go.Heatmap(
-                z=corr_sorted.values,
-                x=sorted_features,
-                y=sorted_features,
-                colorscale="RdBu_r",
-                zmid=0,
-                name="Spearman r",
-                colorbar=dict(title="Spearman r", len=row_heights[1], yanchor="bottom", y=0.0, x=1.02, thickness=14),
-            ),
-            row=2, col=rpkm_col,
-        )
+
+        if correlation_prefix is None:
+            if height is None:
+                height = int(margin["t"] + margin["b"] + ABUNDANCE_PANEL_PX + HEATMAP_GAP_PX + bins_px)
+            plot_height = height - margin["t"] - margin["b"]
+            row_heights = [(plot_height - HEATMAP_GAP_PX - bins_px) / plot_height, bins_px / plot_height]
+            fig = make_subplots(
+                rows=2,
+                cols=rpkm_col,
+                specs=[[{}, {}], [None, {}]] if annotations is not None else [[{}], [{}]],
+                shared_xaxes=True,
+                shared_yaxes=annotations is not None,
+                column_widths=column_widths,
+                row_heights=row_heights,
+                horizontal_spacing=0.02,
+                vertical_spacing=HEATMAP_GAP_PX / plot_height,
+            )
+            fig.add_trace(abundance.update(colorbar_len=row_heights[0]), row=1, col=rpkm_col)
+            fig.add_trace(correlation.update(colorbar_len=row_heights[1]), row=2, col=rpkm_col)
+            correlation_fig, correlation_row = fig, 2
+        else:
+            # Two figures of the same width, margins and columns, so that,
+            # drawn one above the other at the same width, their bins line up.
+            # The bins are named once, beneath the correlation
+            fig = make_subplots(
+                rows=1, cols=rpkm_col, shared_yaxes=annotations is not None,
+                column_widths=column_widths, horizontal_spacing=0.02,
+            )
+            fig.add_trace(abundance.update(colorbar_len=1.0), row=1, col=rpkm_col)
+            correlation_fig = make_subplots(
+                rows=1, cols=rpkm_col, specs=[[None, {}]] if annotations is not None else [[{}]],
+                column_widths=column_widths, horizontal_spacing=0.02,
+            )
+            correlation_fig.add_trace(correlation.update(colorbar_len=1.0), row=1, col=rpkm_col)
+            correlation_fig.update_layout(
+                width=width,
+                height=int(HEATMAP_GAP_PX + margin["b"] + bins_px),
+                template=TEMPLATE,
+                showlegend=False,
+                margin=dict(margin, t=HEATMAP_GAP_PX),
+            )
+            correlation_row = 1
+            height = height or int(margin["t"] + HEATMAP_GAP_PX + ABUNDANCE_PANEL_PX)
+            margin = dict(margin, b=HEATMAP_GAP_PX)
 
         if annotations is not None:
             for col_idx, col in enumerate(annotations.columns):
@@ -325,16 +357,19 @@ class ContrastMetagenomesSet(DatasetDict):
             template=TEMPLATE,
             showlegend=annotations is not None,
             # One row, the annotation column's name leading its entries
-            # rather than stacked above them
-            legend=dict(TOP_LEGEND, traceorder="normal", y=1.04),
+            # rather than stacked above them; hung from the top of the canvas,
+            # since a fraction of a short plot puts it on the column's name
+            legend=dict(TOP_LEGEND, traceorder="normal", yref="container", y=1.0, yanchor="top"),
             margin=margin,
         )
         fig.update_yaxes(title_text="Samples", row=1, col=1)
-        fig.update_yaxes(title_text="Pangenome bin", showticklabels=False, ticks="", row=2, col=rpkm_col)
-        fig.update_xaxes(title_text="Pangenome bin", row=2, col=rpkm_col)
+        correlation_fig.update_yaxes(title_text="Pangenome bin", showticklabels=False, ticks="", row=correlation_row, col=rpkm_col)
+        correlation_fig.update_xaxes(title_text="Pangenome bin", row=correlation_row, col=rpkm_col)
         fig.update_xaxes(showticklabels=False, ticks="", row=1, col=rpkm_col)
         fig.update_yaxes(showticklabels=False, ticks="", row=1, col=rpkm_col)
         save_image(fig, file_prefix)
+        if correlation_prefix is not None:
+            save_image(correlation_fig, correlation_prefix)
         return fig
 
     def compare_association(
@@ -366,12 +401,13 @@ class ContrastMetagenomesSet(DatasetDict):
         comparator: 'ContrastMetagenomesSet',
         fdr: bool,
         sig_thresh: float,
-    ) -> tuple[pd.DataFrame, pd.DataFrame, str]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         The nine-category table of the two sets' calls (rows the comparator's,
         columns this set's), the counts expected if the calls were
-        independent, and a caption line giving the direction agreement and the
-        chi-squared test described in ``compare_sig_categories``.
+        independent, and one row giving the direction agreement and the
+        chi-squared test described in ``compare_sig_categories``: empty test
+        columns where too few calls were made to test.
         """
         df = self.compare_association(comparator, fdr=fdr, sig_thresh=sig_thresh)
         observed = df.pivot_table(
@@ -389,21 +425,19 @@ class ContrastMetagenomesSet(DatasetDict):
         # A call no bin received leaves an empty row or column, which has no
         # expected count to test against
         tested = observed.loc[observed.sum(axis=1) > 0, observed.sum(axis=0) > 0]
-        if min(tested.shape) < 2:
-            test = "too few calls to test"
-        else:
+        test = dict(agree_in_direction=agree, called_by_both=both)
+        if min(tested.shape) >= 2:
             chi2, pvalue, dof, expected_tested = stats.chi2_contingency(tested.values)
             if expected_tested.min() < MIN_EXPECTED:
                 tables = stats.random_table(tested.sum(axis=1), tested.sum(axis=0), seed=0).rvs(MONTE_CARLO_TABLES)
                 exceeding = int(np.sum(np.array([_chi2_statistic(table) for table in tables]) >= chi2))
                 pvalue = (1 + exceeding) / (1 + MONTE_CARLO_TABLES)
                 # With no random table as extreme, the estimate is only a bound
-                method = "Monte Carlo p " + ("≤" if exceeding == 0 else "=")
+                method = "Monte Carlo, upper bound" if exceeding == 0 else "Monte Carlo"
             else:
-                method = "p ="
-            test = f"chi-squared = {chi2:.1f}, {dof} df, {method} {format_pvalue(pvalue)}"
-        subtitle = f"Direction agrees for {agree:,} of the {both:,} bins both call<br>{test}"
-        return observed, expected, subtitle
+                method = "chi-squared distribution"
+            test.update(chi_squared=chi2, df=dof, pvalue=pvalue, pvalue_from=method)
+        return observed, expected, pd.DataFrame([test])
 
     def compare_sig_categories(
         self,
@@ -423,8 +457,8 @@ class ContrastMetagenomesSet(DatasetDict):
         lower in cases, higher in cases, or neither -- including the bins too
         scarce to test. The bars give the observed count of each category
         beside the count expected if the two analyses were independent, and
-        the caption gives the chi-squared test of that independence over all
-        nine cells. It answers whether the two analyses call the same bins in
+        ``<file_prefix>.csv`` holds the chi-squared test of that independence
+        over all nine cells, for the text: the figure does not print it. It answers whether the two analyses call the same bins in
         the same direction more than chance would, which a test confined to
         the bins both call cannot do when one analysis calls nearly every
         such bin in one direction. Where any expected count is below
@@ -439,7 +473,9 @@ class ContrastMetagenomesSet(DatasetDict):
         disagreement, then bins only one analysis called -- so that the
         question the figure answers can be read left to right.
         """
-        observed, expected, subtitle = self._call_contingency(comparator, fdr, sig_thresh)
+        observed, expected, test = self._call_contingency(comparator, fdr, sig_thresh)
+        if file_prefix is not None:
+            test.to_csv(file_prefix + ".csv", index=False)
 
         ticks, groups, obs, exp = [], [], [], []
         for self_sig, comparator_sig, group in _SIG_CATEGORY_ORDER:
@@ -454,7 +490,7 @@ class ContrastMetagenomesSet(DatasetDict):
             observed=obs,
             expected=exp,
             y_title="Pangenome bins",
-            caption=f"{subtitle}<br>Ticks: <b>{self_label}</b> (upper), <b>{comparator_label}</b> (lower)",
+            tick_rows=[self_label, comparator_label],
             width=width,
             height=height,
             file_prefix=file_prefix,
@@ -477,16 +513,16 @@ class ContrastMetagenomesSet(DatasetDict):
         times more (warm) or fewer (cool) bins it holds than independence
         predicts, on a log scale centered on 1x, and labeled with its observed
         and expected counts. Bins agreeing in direction lie on the diagonal
-        from lower left to upper right. The caption carries the same test.
+        from lower left to upper right.
         """
-        observed, expected, subtitle = self._call_contingency(comparator, fdr, sig_thresh)
+        observed, expected, _ = self._call_contingency(comparator, fdr, sig_thresh)
         # Plotly draws the first row at the bottom
         order = ["<", "=", ">"]
         names = {"<": "Lower in cases", "=": "Not called", ">": "Higher in cases"}
         return plot_observed_expected_heatmap(
             observed.loc[order, order].rename(index=names, columns=names),
             expected.loc[order, order].rename(index=names, columns=names),
-            x_title=self_label, y_title=comparator_label, caption=subtitle,
+            x_title=self_label, y_title=comparator_label,
             width=width, height=height, file_prefix=file_prefix,
         )
 

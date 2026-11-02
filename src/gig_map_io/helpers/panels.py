@@ -112,7 +112,9 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
         the data region that height, so that panels side by side can match,
         and ``"legend": false``
         to be drawn without its legend, where another panel's legend already
-        names the same traces.
+        names the same traces. A cell may instead hold ``stack``, a list of
+        such panels drawn one above another at the cell's width and lettered
+        in turn, so that a tall panel can run beside several shorter ones.
     root:
         The directory the panel paths are relative to.
     output:
@@ -135,40 +137,45 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
     rows = _wrap_rows(panels, columns)
 
     placements: List[Placement] = []
+    lettered = 0
     top = margin
     for row in rows:
         row_height = 0.0
         cell_x = margin
-        for index, panel in row:
-            span = int(panel.get("span", 1))
+        for _, cell in row:
+            span = int(cell.get("span", 1))
             cell_width = span * column_width + (span - 1) * gutter
-            panel_height = panel.get("height_mm")
-            page = _panel_page(
-                Path(root) / panel["pdf"],
-                cell_width,
-                max_height,
-                float(panel.get("font_pt", font_pt)),
-                float(panel_height) * POINTS_PER_MM if panel_height is not None else None,
-                bool(panel.get("legend", True)),
-                panel.get("aspect"),
-                float(panel["plot_height_mm"]) * POINTS_PER_MM if "plot_height_mm" in panel else None,
-            )
-            page_width, page_height = _page_size(page)
-            scale = cell_width / page_width
-            if max_height is not None and page_height * scale > max_height:
-                scale = max_height / page_height
-            placed_width, placed_height = page_width * scale, page_height * scale
-            placements.append(Placement(
-                page=page,
-                label=panel.get("label", LABELS[index]),
-                scale=scale,
-                # Centered in a cell it does not fill, but always hung from the top
-                x=cell_x + (cell_width - placed_width) / 2,
-                y=top + placed_height,
-                cell_x=cell_x,
-                cell_top=top,
-            ))
-            row_height = max(row_height, placed_height)
+            panel_top = top
+            for panel in cell.get("stack", [cell]):
+                panel_height = panel.get("height_mm")
+                page = _panel_page(
+                    Path(root) / panel["pdf"],
+                    cell_width,
+                    max_height,
+                    float(panel.get("font_pt", font_pt)),
+                    float(panel_height) * POINTS_PER_MM if panel_height is not None else None,
+                    bool(panel.get("legend", True)),
+                    panel.get("aspect"),
+                    float(panel["plot_height_mm"]) * POINTS_PER_MM if "plot_height_mm" in panel else None,
+                )
+                page_width, page_height = _page_size(page)
+                scale = cell_width / page_width
+                if max_height is not None and page_height * scale > max_height:
+                    scale = max_height / page_height
+                placed_width, placed_height = page_width * scale, page_height * scale
+                placements.append(Placement(
+                    page=page,
+                    label=panel.get("label", LABELS[lettered]),
+                    scale=scale,
+                    # Centered in a cell it does not fill, but always hung from the top
+                    x=cell_x + (cell_width - placed_width) / 2,
+                    y=panel_top + placed_height,
+                    cell_x=cell_x,
+                    cell_top=panel_top,
+                ))
+                lettered += 1
+                panel_top += placed_height + gutter
+            row_height = max(row_height, panel_top - gutter - top)
             cell_x += cell_width + gutter
         top += row_height + gutter
     height = top - gutter + margin

@@ -40,6 +40,11 @@ EMPTY_HEIGHT = 140
 #: Room beneath the plot for the axis titles, and for each extra line of one
 BOTTOM_PX = 60
 TITLE_LINE_PX = 16
+#: A category name longer than this breaks over two lines, so that a long
+#: annotation term does not take the width the bars need in a printed panel
+WRAP_CHARS = 24
+#: Room right of the plot for a q-value printed beyond the last bar
+MARK_MARGIN_PX = 70
 
 
 def enrich_organisms(
@@ -142,6 +147,9 @@ def plot_enrichment(
     (``"qvalue"``), for a figure whose terms all clear it already.
     """
     df = enrichment.copy()
+    df[label] = df[label].map(_wrap_label)
+    if order is not None:
+        order = [_wrap_label(name) for name in order]
     for column in ["odds_ratio", "qvalue", "n_foreground", "n_background"]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
 
@@ -154,11 +162,12 @@ def plot_enrichment(
     df.loc[df["n_foreground"] == 0, "log2_odds_ratio"] = np.nan
     if mark == "star":
         df["mark"] = np.where(df["qvalue"] < qvalue_threshold, "*", "")
-        # Two lines: on one it runs into the count axis's title in a narrow panel
+        # Two lines, here and for the q-values: on one it runs into the count
+        # axis's title in a narrow panel
         odds_title = f"log2 odds ratio<br>(* q < {qvalue_threshold})"
     elif mark == "qvalue":
         df["mark"] = "q = " + df["qvalue"].map("{:.2g}".format)
-        odds_title = "log2 odds ratio"
+        odds_title = "log2<br>odds ratio"
     else:
         raise ValueError("mark must be 'star' or 'qvalue'")
 
@@ -182,7 +191,8 @@ def plot_enrichment(
         fig.add_trace(trace, row=1, col=1)
     for trace in px.bar(x="log2_odds_ratio", text="mark", **shared).data:
         fig.add_trace(
-            trace.update(showlegend=False, textposition="outside", textfont_size=11),
+            # A q-value may run past the end of the axis, into the margin kept for it
+            trace.update(showlegend=False, textposition="outside", textfont_size=11, cliponaxis=False),
             row=1, col=2,
         )
 
@@ -195,14 +205,14 @@ def plot_enrichment(
         upper = float(np.nanmax(df["log2_odds_ratio"])) if df["log2_odds_ratio"].notna().any() else 1.0
         fig.update_xaxes(range=[min(0.0, float(np.nanmin(df["log2_odds_ratio"]))), upper * 1.45], row=1, col=2)
 
-    longest = max((len(str(name)) for name in df[label]), default=0)
+    longest = max((len(line) for name in df[label] for line in str(name).split("<br>")), default=0)
     top = 50 if show_legend else 30
     fig.update_layout(
         width=width if width is not None else int(np.clip(
             PANELS_PX + LABEL_CHAR_PX * longest, MIN_WIDTH, MAX_WIDTH,
         )),
         height=height if height is not None else (
-            top + BOTTOM_PX + (TITLE_LINE_PX if mark == "star" else 0) + max(MIN_PLOT_PX, CATEGORY_PX * n_categories)
+            top + BOTTOM_PX + TITLE_LINE_PX + max(MIN_PLOT_PX, CATEGORY_PX * n_categories)
         ),
         template=TEMPLATE,
         barmode="group",
@@ -210,7 +220,7 @@ def plot_enrichment(
         legend=dict(
             title_text="", orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom",
         ),
-        margin=dict(t=top, b=BOTTOM_PX + (TITLE_LINE_PX if mark == "star" else 0)),
+        margin=dict(t=top, b=BOTTOM_PX + TITLE_LINE_PX, r=MARK_MARGIN_PX if mark == "qvalue" else None),
         # A gridline per bin reads as a count while there are few; up to ten,
         # one every two keeps the labels apart in a narrow panel
         xaxis=dict(title="Bins in set", dtick=_count_dtick(df["n_foreground"].max())),
@@ -232,3 +242,19 @@ def plot_enrichment(
 
     save_image(fig, file_prefix)
     return fig
+
+
+def _wrap_label(name):
+    """
+    ``name`` over two lines when it is longer than ``WRAP_CHARS``, broken at
+    the space or after the slash nearest its middle; as it is otherwise, or
+    when it has nowhere to break.
+    """
+    if not isinstance(name, str) or len(name) <= WRAP_CHARS:
+        return name
+    # A space is replaced by the break; a slash stays at the end of the first line
+    breaks = [(i, i + 1) for i, c in enumerate(name) if c == " "] + [(i + 1, i + 1) for i, c in enumerate(name[:-1]) if c == "/"]
+    if not breaks:
+        return name
+    end, start = min(breaks, key=lambda b: (abs(b[0] - len(name) / 2), b[0]))
+    return f"{name[:end]}<br>{name[start:]}"

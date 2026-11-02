@@ -53,7 +53,7 @@ COMPOSITION_ROW_PX = 90
 #: One bin's row in the abundance box plots, the gap between rows, and the
 #: shortest row that still fits the axis title beside it
 BOXPLOT_ROW_PX = 100
-BOXPLOT_ROW_GAP_PX = 28
+BOXPLOT_ROW_GAP_PX = 40
 MIN_BOXPLOT_PLOT_PX = 170
 
 
@@ -589,7 +589,7 @@ class StudySet:
 
         n_bins = len(index)
         rows_px = max(MIN_BOXPLOT_PLOT_PX, BOXPLOT_ROW_PX * n_bins + BOXPLOT_ROW_GAP_PX * (n_bins - 1))
-        top, bottom = 80, 95
+        top, bottom = 60, 95
         fig = px.box(
             data_frame=pd.concat(panels),
             x="Cohort",
@@ -611,7 +611,10 @@ class StudySet:
         # Only the decades are worth a tick on a three-decade axis
         decades = [10.0 ** i for i in range(int(np.log10(floor)), 1)]
         fig.update_yaxes(tickvals=decades, ticktext=[f"{d:g}" for d in decades])
-        fig.update_xaxes(tickangle=-40)
+        # Tick marks only under the bottom row, the one labeled: elsewhere they
+        # reach into the bin name over the row below
+        fig.update_xaxes(tickangle=-40, ticks="")
+        fig.update_xaxes(ticks="outside", selector=dict(anchor="y"))
         fig.for_each_annotation(
             lambda a: a.update(x=0.02, xanchor="left", text=a.text.split("=", 1)[1])
         )
