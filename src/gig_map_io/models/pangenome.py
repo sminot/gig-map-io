@@ -59,6 +59,10 @@ MAP_MAX_WIDTH_IN = 6.5
 #: A gene map's width per gene drawn, and what it needs besides, in inches
 GENE_MAP_IN_PER_GENE = 0.2
 GENE_MAP_BASE_IN = 0.6
+#: A gene and context map draw the largest run of a bin's genes with no gap
+#: between neighbors over this many bp. At 20 kb, Alistipes Bin 100 split
+#: over a 22 kb gap into two runs of one locus
+BIN_WINDOW_MAX_GAP = 25000
 
 
 def _largest_cluster(genes: pd.DataFrame, max_gap: int) -> pd.DataFrame:
@@ -707,7 +711,7 @@ class Pangenome(Dataset):
         bin: str,
         width: float | None = None,
         height: float = 1.0,
-        max_gap: int = 20000,
+        max_gap: int = BIN_WINDOW_MAX_GAP,
         min_bin_fraction: float = 0.5,
         remove_gene_id = True,
         remove_org_tag = True,
@@ -813,7 +817,7 @@ class Pangenome(Dataset):
         bin: str,
         n_genomes: int = 10,
         flank: int = 8000,
-        max_gap: int = 20000,
+        max_gap: int = BIN_WINDOW_MAX_GAP,
         min_bin_fraction: float = 0.5,
         max_without_bin: float = 1 / 3,
         min_flank_fraction: float = 0.5,
