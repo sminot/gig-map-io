@@ -186,10 +186,14 @@ class Phylogeny:
                     name=group,
                     legendgroup=group,
                     showlegend=showlegend,
+                    # Sizes given per point make plotly draw a bubble chart,
+                    # which defaults to 70% opacity and a white outline
                     marker=dict(
                         color=color,
                         size=[COLLAPSED_MARKER_PX if leaf in self.collapsed else LEAF_MARKER_PX for leaf in members],
                         symbol=["triangle-left" if leaf in self.collapsed else "circle" for leaf in members],
+                        opacity=1,
+                        line_width=0,
                     ),
                     cliponaxis=False,
                 ),

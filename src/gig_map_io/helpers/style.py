@@ -30,6 +30,9 @@ MATPLOTLIB_DPI = 200
 #: Color of a series when nothing distinguishes it from another.
 PRIMARY = "#2c6fbb"
 NEUTRAL = "#8a8f98"
+#: Beside ``PRIMARY`` when two series are told apart and neither is case-like,
+#: such as two species (Okabe-Ito orange).
+SECONDARY = "#E69F00"
 
 #: Ten distinguishable hues (Paul Tol's color-blind safe set, led by
 #: ``PRIMARY``) for organisms, studies and any other categorical series.

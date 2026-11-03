@@ -1196,8 +1196,9 @@ class Pangenome(Dataset):
         tree.plot_lines(fig, row=1, col=1)
         tree.plot_points(fig, mode="markers", row=1, col=1)
         fig.update_xaxes(title_text="ANI distance", row=1, col=1)
-        # Above the strip, the bin names stay clear of the tree's last tick
-        fig.update_xaxes(side="top", row=1, col=2)
+        # Above the strip, the bin names stay clear of the tree's last tick;
+        # every bin is named, where plotly would drop alternate names to fit
+        fig.update_xaxes(side="top", dtick=1, row=1, col=2)
         fig.add_heatmap(
             z=df.values,
             x=df.columns.values,
