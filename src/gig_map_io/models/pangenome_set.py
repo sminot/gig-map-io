@@ -14,7 +14,7 @@ from gig_map_io.helpers.enrichment import enrich_organisms, plot_enrichment
 from gig_map_io.helpers.save_image import save_image
 from gig_map_io.helpers.style import SIMPLE_TEMPLATE, TEMPLATE, organism_colors, organism_order
 
-from .pangenome import Pangenome
+from .pangenome import GENE_HEATMAP_MARGIN_PX, Pangenome
 from .dataset_dict import DatasetDict
 
 
@@ -416,13 +416,16 @@ class PangenomeSet(DatasetDict):
             vertical_spacing=vertical_spacing,
             subplot_titles=[pangenome for pangenome in self.pangenomes.keys()]
         )
+        # The width of one facet, which decides which bins its key can color
+        axis_width_px = (
+            (width - GENE_HEATMAP_MARGIN_PX) * (1 - (col_wrap - 1) * horizontal_spacing) / col_wrap
+        )
         for i, pangenome in enumerate(self.pangenomes.keys()):
-            for trace in self.pangenomes[pangenome].bin_genome_heatmap().data:
-                fig.add_trace(
-                    trace,
-                    row=i // col_wrap + 1,
-                    col=i % col_wrap + 1
-                )
+            row, col = i // col_wrap + 1, i % col_wrap + 1
+            facet = self.pangenomes[pangenome].bin_genome_heatmap(axis_width_px=axis_width_px)
+            for trace in facet.data:
+                fig.add_trace(trace, row=row, col=col)
+            fig.update_yaxes(tickvals=facet.layout.yaxis.tickvals, row=row, col=col)
 
         fig.update_layout(
             height=height, width=width, template=SIMPLE_TEMPLATE,

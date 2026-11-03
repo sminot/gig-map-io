@@ -18,7 +18,7 @@ from plotly.subplots import make_subplots
 
 from ..helpers.clustering import linkage_order
 from ..helpers.save_image import save_image
-from ..helpers.style import PRIMARY, SIMPLE_TEMPLATE, TEMPLATE
+from ..helpers.style import NEUTRAL, PRIMARY, QUALITATIVE, SIMPLE_TEMPLATE, TEMPLATE
 from ..helpers.coords import Coords
 from ..helpers.gene_context import draw_gene_labels, order_rows, plot_gene_context, unlabeled_note
 from ..helpers.genomes import genbank_duplicates
@@ -37,6 +37,25 @@ LOG_ODDS_STEP = 2
 
 #: How gene co-occurrence can be scored against distance: the column of
 #: calc_membership_vs_distance, its axis title, and how it is binned
+#: The bin key above a gene-content heatmap: each bin in turn takes the next
+#: color of QUALITATIVE, and one narrower than BIN_KEY_MIN_PX where it is
+#: drawn cannot be told from its neighbors, so it is gray, and a run of small
+#: bins reads as one gray band. Its height, and its gap above the genomes, as
+#: fractions of the genome rows.
+BIN_KEY_MIN_PX = 3
+BIN_KEY_HEIGHT = 0.06
+BIN_KEY_GAP = 0.02
+#: The gene-content heatmap's left and right margins together
+GENE_HEATMAP_MARGIN_PX = 90
+
+
+def genome_axis_ticks(n_genomes: int) -> List[int]:
+    """Round numbers of genomes, at most six of them, from 0 to ``n_genomes``."""
+    step = max(1, 10 ** int(np.floor(np.log10(n_genomes / 4))))
+    step *= next(m for m in (1, 2, 5, 10) if n_genomes / (step * m) <= 6)
+    return list(range(0, n_genomes + 1, step))
+
+
 MEMBERSHIP_METRICS = {
     "jaccard": ("membership", "Shared genomes (Jaccard)", lambda x: x.round(1)),
     "log_odds": (
@@ -340,18 +359,42 @@ class Pangenome(Dataset):
         self,
         width: int = 500,
         height: int = 400,
+        axis_width_px: float | None = None,
         file_prefix: str | None = None
     ) -> go.Figure:
         """
-        Heatmap of bin presence/absence for each genome.
+        Heatmap of bin presence/absence for each genome, each bin as wide as
+        its number of genes, beneath a key that colors the bins in turn so
+        that the edges between them can be seen.
+
+        Parameters
+        ----------
+        axis_width_px:
+            The width the genes are drawn across, which decides which bins
+            are too narrow to color in the key; by default the figure's width
+            less its margins. A faceted figure passes its facets' width.
         """
 
         # Perform hierarchical clustering on the rows and columns
         wide = self.bin_presence_wide
         wide_sorted = wide.iloc[linkage_order(wide.values, method="ward"), linkage_order(wide.values.T, method="ward")]
+        n_genomes = wide_sorted.shape[0]
 
         # Set the edges of the bins so that the widths match the number of genes
-        x = [0] + self.bin_size.reindex(wide_sorted.columns.values).cumsum().tolist()
+        sizes = self.bin_size.reindex(wide_sorted.columns.values)
+        x = [0] + sizes.cumsum().tolist()
+
+        # The key: wide enough bins cycle through the palette, the rest are gray
+        px_per_gene = (axis_width_px or width - GENE_HEATMAP_MARGIN_PX) / sizes.sum()
+        wide_enough = (sizes * px_per_gene >= BIN_KEY_MIN_PX).to_numpy()
+        color_index = np.where(wide_enough, (np.cumsum(wide_enough) - 1) % len(QUALITATIVE), len(QUALITATIVE))
+        palette = QUALITATIVE + [NEUTRAL]
+        colorscale = [
+            [edge, color]
+            for i, color in enumerate(palette)
+            for edge in (i / len(palette), (i + 1) / len(palette))
+        ]
+        key_bottom = n_genomes - 0.5 + BIN_KEY_GAP * n_genomes
 
         fig = go.Figure(
             data=[
@@ -360,11 +403,24 @@ class Pangenome(Dataset):
                     x=x,
                     colorscale="blues",
                     showscale=False
-                )
+                ),
+                go.Heatmap(
+                    z=[color_index],
+                    x=x,
+                    y=[key_bottom, key_bottom + BIN_KEY_HEIGHT * n_genomes],
+                    zmin=-0.5,
+                    zmax=len(palette) - 0.5,
+                    colorscale=colorscale,
+                    showscale=False,
+                    text=[[f"{bin} ({size:,} genes)" for bin, size in sizes.items()]],
+                    hovertemplate="%{text}<extra></extra>",
+                ),
             ],
             layout=go.Layout(
                 xaxis_title="Gene",
                 yaxis_title="Genome",
+                # Ticks only beside the genomes, none beside the key
+                yaxis_tickvals=genome_axis_ticks(n_genomes),
                 margin=dict(r=20),
                 template=SIMPLE_TEMPLATE,
                 width=width,
