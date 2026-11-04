@@ -279,28 +279,23 @@ class Pangenome(Dataset):
         return pd.read_csv(path, index_col=0)
 
     @cached_property
-    def all_genome_alignments(self) -> pd.DataFrame:
-        """
-        Alignment of every genome from align/genomes.aln.csv.gz, with each
-        gene's bin, GenBank copies of RefSeq assemblies included.
-        """
-        df = pd.read_csv(self.directory / "align" / "genomes.aln.csv.gz")
-        return df.assign(bin=df["sseqid"].apply(self.gene_bins.set_index("gene_id")["bin"].get))
-
-    @cached_property
     def genomes(self) -> list[str]:
         """Every genome file the pangenome was built from, sorted, GenBank twins included."""
-        return sorted(self.all_genome_alignments["genome"].unique())
+        path = self.directory / "align" / "genomes.aln.csv.gz"
+        return sorted(pd.read_csv(path, usecols=["genome"])["genome"].unique())
 
     @cached_property
     def align_genomes(self) -> pd.DataFrame:
         """
-        Alignment of genomes, less the GenBank copy of any assembly also
-        present under its RefSeq accession, so that each assembly counts once
-        wherever genomes are counted, as it does in the trees.
+        Alignment of genomes from align/genomes.aln.csv.gz, with each gene's
+        bin, less the GenBank copy of any assembly also present under its
+        RefSeq accession, so that each assembly counts once wherever genomes
+        are counted, as it does in the trees. Only this filtered copy is
+        kept: the alignments of the larger pangenomes run to gigabytes.
         """
-        df = self.all_genome_alignments
-        return df.loc[~df["genome"].isin(genbank_duplicates(self.genomes))]
+        df = pd.read_csv(self.directory / "align" / "genomes.aln.csv.gz")
+        df = df.loc[~df["genome"].isin(genbank_duplicates(df["genome"].unique()))]
+        return df.assign(bin=df["sseqid"].map(self.gene_bins.set_index("gene_id")["bin"]))
 
     @cached_property
     def bin_names(self) -> list[str]:
