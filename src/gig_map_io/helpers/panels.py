@@ -74,6 +74,10 @@ CHARACTER_WIDTH = 0.55
 AXIS_TITLE_PADDING = 1.15
 
 LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+#: bind_figures: the strip above each figure holding its number, and the
+#: number's size
+HEADING_MM = 9.0
+HEADING_SIZE_PT = 11.0
 
 
 @dataclass
@@ -478,6 +482,64 @@ def _page_size(page: PageObject) -> tuple:
 def _page_origin(page: PageObject) -> tuple:
     box = page.cropbox
     return float(box.left), float(box.bottom)
+
+
+def bind_figures(figures: Sequence[tuple], output: str | Path) -> Path:
+    """
+    One PDF of several assembled figures, a page each, in the order given.
+    Each page is its figure's own size with a strip above it carrying the
+    figure's number, and nothing else: no title, no legend.
+
+    Parameters
+    ----------
+    figures:
+        (number, pdf) pairs, such as ("Figure 2", "figures/figure_2/figure.pdf").
+    output:
+        Where to write the bound PDF.
+    """
+    heading = HEADING_MM * POINTS_PER_MM
+    writer = PdfWriter()
+    for number, pdf in figures:
+        page = PdfReader(pdf).pages[0]
+        width, height = _page_size(page)
+        sheet = writer.add_blank_page(width=width, height=height + heading)
+        origin = _page_origin(page)
+        transformation = Transformation().translate(-origin[0], -origin[1])
+        _move_patterns(page, transformation.ctm)
+        sheet.merge_transformed_page(page, transformation)
+        sheet.merge_page(_heading_overlay(number, width, height + heading))
+    writer.compress_identical_objects(remove_duplicates=True, remove_unreferenced=True)
+
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("wb") as handle:
+        writer.write(handle)
+    return output
+
+
+def _heading_overlay(text: str, width: float, height: float) -> PageObject:
+    """A transparent page carrying ``text`` at its top left, in the margin."""
+    with matplotlib.rc_context({
+        "pdf.fonttype": 42,
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
+    }):
+        fig = plt.figure(figsize=(width / 72, height / 72))
+        fig.patch.set_alpha(0)
+        axes = fig.add_axes([0, 0, 1, 1])
+        axes.set_xlim(0, width)
+        axes.set_ylim(0, height)
+        axes.axis("off")
+        margin = DEFAULT_MARGIN_MM * POINTS_PER_MM
+        axes.text(
+            margin, height - margin, text,
+            fontsize=HEADING_SIZE_PT, fontweight="bold", ha="left", va="top",
+        )
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format="pdf", transparent=True)
+        plt.close(fig)
+    buffer.seek(0)
+    return PdfReader(buffer).pages[0]
 
 
 def _label_overlay(
