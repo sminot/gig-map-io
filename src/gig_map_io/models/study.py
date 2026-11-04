@@ -32,7 +32,7 @@ from ..helpers.significance import call_direction
 from ..helpers.style import FDR_THRESH, organism_order
 
 #: The two sets the significant bins are split into, by the sign of their effect
-DIRECTIONS = {"Positively associated": "positive", "Negatively associated": "negative"}
+DIRECTIONS = {"Higher in cases": "positive", "Lower in cases": "negative"}
 
 
 class Study:

@@ -22,8 +22,8 @@ from .style import CASE_COLOR, CONTROL_COLOR, TEMPLATE, ZERO_LINE, group_colors
 #: How the significant bins are split by direction of effect, and the color
 #: of each side: bins higher in cases take the case color
 ASSOCIATION_COLORS = {
-    "Positively associated": CASE_COLOR,
-    "Negatively associated": CONTROL_COLOR,
+    "Higher in cases": CASE_COLOR,
+    "Lower in cases": CONTROL_COLOR,
 }
 
 #: Sizing: the two panels and their margins, the width one character of a
@@ -43,8 +43,12 @@ TITLE_LINE_PX = 16
 #: A category name longer than this breaks over two lines, so that a long
 #: annotation term does not take the width the bars need in a printed panel
 WRAP_CHARS = 24
-#: Room right of the plot for a q-value printed beyond the last bar
+#: Room right of the plot for a q-value printed beyond the last bar, and the
+#: gap between a bar and its q-value
 MARK_MARGIN_PX = 70
+MARK_GAP_PX = 3
+#: Just short of the left end of the plot, where the legend starts
+LEGEND_X = -0.001
 
 
 def enrich_organisms(
@@ -189,12 +193,21 @@ def plot_enrichment(
     fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.12)
     for trace in px.bar(x="n_foreground", **shared).data:
         fig.add_trace(trace, row=1, col=1)
-    for trace in px.bar(x="log2_odds_ratio", text="mark", **shared).data:
+    for trace in px.bar(x="log2_odds_ratio", text="mark" if mark == "star" else None, **shared).data:
         fig.add_trace(
-            # A q-value may run past the end of the axis, into the margin kept for it
             trace.update(showlegend=False, textposition="outside", textfont_size=11, cliponaxis=False),
             row=1, col=2,
         )
+    if mark == "qvalue":
+        # Right of the bar, or of the zero line for a bar below it: printed
+        # outside a short negative bar, a q-value runs over the axis. It may
+        # run past the end of the axis, into the margin kept for it
+        drawn = df.dropna(subset=["log2_odds_ratio"])
+        for value, category, text in zip(drawn["log2_odds_ratio"], drawn[label], drawn["mark"]):
+            fig.add_annotation(
+                x=max(value, 0.0), y=category, xref="x2", yref="y2", text=text, showarrow=False,
+                xanchor="left", xshift=MARK_GAP_PX, font_size=11,
+            )
 
     fig.add_vline(x=0, row=1, col=2, **ZERO_LINE)
     # px applied category_orders to its own figure; the traces copied from it
@@ -218,7 +231,11 @@ def plot_enrichment(
         barmode="group",
         showlegend=show_legend,
         legend=dict(
-            title_text="", orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom",
+            # Set from the left end of the plot: plotly wraps a legend anchored
+            # within the plot at the plot's width, too narrow beside long
+            # category names for both entries on one line, and lets one
+            # anchored left of it take the left margin's width as well
+            title_text="", orientation="h", x=LEGEND_X, xanchor="left", y=1.0, yanchor="bottom",
         ),
         margin=dict(t=top, b=BOTTOM_PX + TITLE_LINE_PX, r=MARK_MARGIN_PX if mark == "qvalue" else None),
         # A gridline per bin reads as a count while there are few; up to ten,
