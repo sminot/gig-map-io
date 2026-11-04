@@ -921,6 +921,8 @@ class Pangenome(Dataset):
         remove_gene_id: bool = True,
         remove_org_tag: bool = True,
         genome_names: Dict[str, str] | None = None,
+        genome_colors: Dict[str, str] | None = None,
+        color_key: Dict[str, str] | None = None,
         file_prefix: str | None = None,
     ) -> plt.Figure:
         """
@@ -959,7 +961,9 @@ class Pangenome(Dataset):
         with the gene map), and the footnote says how many lie elsewhere.
         ``genome_names`` labels the rows (keyed by the genome's file name, as
         in ``helpers.ncbi.genome_names``); a genome it does not name is
-        labeled by its accession.
+        labeled by its accession. ``genome_colors``, keyed the same way, puts
+        a square of the genome's color between its label and its row, and
+        ``color_key`` (label to color) says what the colors mean.
         """
         aln = self.align_genomes
         n_bin_genes = int(self.bin_size[bin])
@@ -1055,11 +1059,12 @@ class Pangenome(Dataset):
 
         fig = plot_gene_context(
             bin_genes,
-            [dict(row, genome=row["genome_label"]) for row in ordered],
+            [dict(row, genome=row["genome_label"], color=(genome_colors or {}).get(row["genome"])) for row in ordered],
             window,
             width=width,
             font_size=font_size,
             note=f"{n_elsewhere} of the bin's {n_bin_genes} genes lie outside this window." if n_elsewhere else None,
+            color_key=color_key,
         )
         save_image(fig, file_prefix)
         if file_prefix is not None:

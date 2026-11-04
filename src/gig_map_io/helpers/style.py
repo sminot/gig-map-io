@@ -41,6 +41,11 @@ QUALITATIVE = [
     "#44AA99", "#999933", "#882255", "#88CCEE", "#661100",
 ]
 
+#: The species within one organism, in alphabetical order: blue and orange for
+#: the first two (A. finegoldii and A. onderdonkii, among Alistipes), then the
+#: rest of QUALITATIVE. Trees and maps of the same genomes share it.
+SPECIES_PALETTE = [PRIMARY, SECONDARY, *QUALITATIVE[2:]]
+
 #: For a categorical series with more levels than ``QUALITATIVE`` can tell
 #: apart, such as participants or community types.
 LARGE_QUALITATIVE = px.colors.qualitative.Dark24

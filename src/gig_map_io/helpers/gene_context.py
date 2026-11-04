@@ -15,9 +15,11 @@ black outline.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Dict, Sequence
 
 import matplotlib.pyplot as plt
+from matplotlib import transforms
+from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 from matplotlib.path import Path
@@ -58,6 +60,10 @@ LABEL_OFFSET_IN = 0.3
 LABEL_BASE_IN = 0.1
 #: Gap between the row labels and the rows, in inches
 ROW_LABEL_PAD_IN = 0.08
+#: A row's color square, between its label and the row: its largest side, and
+#: the room the label moves left to make for it, in points
+SWATCH_MAX_PT = 5.5
+SWATCH_PAD_PT = 9.0
 #: Upright labels are spaced this many font sizes apart
 LABEL_PITCH = 1.3
 #: Genes whose label starts with this go unlabeled when labeling every gene
@@ -176,6 +182,7 @@ def plot_gene_context(
     width: float,
     font_size: float,
     note: str | None = None,
+    color_key: Dict[str, str] | None = None,
 ) -> plt.Figure:
     """
     Draw the context map.
@@ -200,6 +207,10 @@ def plot_gene_context(
         A line for the footnote above the key to the colors, such as how many
         of the bin's genes lie outside the window. Like every figure here
         the map has no title.
+    color_key:
+        What the rows' colors mean, label to color, drawn at the bottom left.
+        A row's ``color``, where it has one, is a square between its label
+        and the row, such as the species color a tree beside it uses.
     """
     lo, hi = window
     n_rows = len(rows)
@@ -237,6 +248,18 @@ def plot_gene_context(
     main.set_yticklabels([row["genome"] for row in reversed(rows)], fontsize=font_size - 1)
     main.set_ylim(-0.7, n_rows - 0.3)
     main.tick_params(axis="y", length=0)
+    swatches = [(n_rows - 1 - i, row["color"]) for i, row in enumerate(rows) if row.get("color")]
+    if swatches:
+        main.tick_params(axis="y", pad=SWATCH_PAD_PT)
+        side = min(SWATCH_MAX_PT, 0.7 * row_height * 72)
+        at_left = transforms.blended_transform_factory(main.transAxes, main.transData) + transforms.ScaledTranslation(
+            -SWATCH_PAD_PT / 2 / 72, 0, fig.dpi_scale_trans
+        )
+        ys, swatch_colors = zip(*swatches)
+        main.scatter(
+            [0] * len(ys), ys, s=side ** 2, c=list(swatch_colors), marker="s", linewidths=0,
+            transform=at_left, clip_on=False, zorder=3,
+        )
     for side in ("top", "right", "left"):
         main.spines[side].set_visible(False)
 
@@ -251,6 +274,8 @@ def plot_gene_context(
     # bin's labels have to fit in
     renderer = fig.canvas.get_renderer()
     row_label_in = max(label.get_window_extent(renderer).width for label in main.get_yticklabels()) / fig.dpi
+    if swatches:
+        row_label_in += SWATCH_PAD_PT / 72
     gs.update(left=(row_label_in + ROW_LABEL_PAD_IN) / width)
 
     # The bin alone, labeled, above the rows, its y units inches; the panel
@@ -275,10 +300,22 @@ def plot_gene_context(
     footnote = fig.text(
         0.98, 0, "\n".join(notes + [key]), ha="right", va="bottom", fontsize=font_size - 1, color="#555555",
     )
+    legend = None
+    if color_key:
+        legend = fig.legend(
+            handles=[
+                Line2D([], [], marker="s", linestyle="", markersize=SWATCH_MAX_PT, markeredgewidth=0, color=color)
+                for color in color_key.values()
+            ],
+            labels=list(color_key), loc="lower left", bbox_to_anchor=(0.01, 0), ncol=len(color_key),
+            frameon=False, fontsize=font_size - 1, handletextpad=0.3, columnspacing=1.2, borderaxespad=0,
+        )
     bottom_in = AXIS_IN + FOOTNOTE_PAD_IN + footnote.get_window_extent(renderer).height / fig.dpi
     fig_height = TOP_PAD_IN + label_height + rows_height + bottom_in
     fig.set_figheight(fig_height)
     footnote.set_y(FOOTNOTE_PAD_IN / fig_height)
+    if legend is not None:
+        legend.set_bbox_to_anchor((0.01, FOOTNOTE_PAD_IN / fig_height), transform=fig.transFigure)
     gs.set_height_ratios([label_height, rows_height])
     gs.update(top=1 - TOP_PAD_IN / fig_height, bottom=bottom_in / fig_height)
     return fig
