@@ -284,7 +284,7 @@ class PangenomeSet(DatasetDict):
         df = pd.DataFrame(results)
 
         # Prune redundant shorter terms: drop term T if a longer super-term T' exists
-        # such that T is a substring of T' and pvalue(T') <= pvalue(T)
+        # such that T is a run of T's words and pvalue(T') <= pvalue(T)
         pvalue_map = dict(zip(df["term"], df["pvalue"]))
         terms_to_drop = set()
         all_terms = list(pvalue_map.keys())
@@ -292,8 +292,13 @@ class PangenomeSet(DatasetDict):
             for other_term in all_terms:
                 if other_term == term:
                     continue
-                # other_term is a longer super-term containing term as a contiguous phrase
-                if len(other_term) > len(term) and term in other_term and pvalue_map[other_term] <= pvalue_map[term]:
+                # other_term is a longer super-term containing term as a contiguous
+                # phrase of whole words: "bile" is not inside "mobile"
+                if (
+                    len(other_term) > len(term)
+                    and f" {term} " in f" {other_term} "
+                    and pvalue_map[other_term] <= pvalue_map[term]
+                ):
                     terms_to_drop.add(term)
                     break
 

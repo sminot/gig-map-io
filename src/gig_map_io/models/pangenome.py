@@ -278,10 +278,14 @@ class Pangenome(Dataset):
     @cached_property
     def align_genomes(self) -> pd.DataFrame:
         """
-        Alignment of genomes from align/genomes.aln.csv.gz.
+        Alignment of genomes from align/genomes.aln.csv.gz, less the GenBank
+        copy of any assembly also present under its RefSeq accession, so that
+        each assembly counts once wherever genomes are counted, as it does in
+        the trees.
         """
         path = self.directory / "align" / "genomes.aln.csv.gz"
         df = pd.read_csv(path)
+        df = df.loc[~df["genome"].isin(genbank_duplicates(df["genome"].unique()))]
 
         # Add the bin label to the alignment
         df = df.assign(
@@ -301,14 +305,27 @@ class Pangenome(Dataset):
     @cached_property
     def genome_content(self) -> pd.DataFrame:
         """
-        Genome content DataFrame loaded from bin_pangenome/genome_content.long.csv.
+        For each genome and bin, the number of the bin's genes detected in the
+        genome (``n_genes_detected``) and that number's share of the bin
+        (``prop_genes_detected``), counted from the genome alignments.
 
-        Returns
-        -------
-        DataFrame containing genome content data.
+        gig-map writes the same table to bin_pangenome/genome_content.long.csv,
+        and the counts agree wherever both have them, but that table leaves
+        out some genomes (ten Blautia genomes carrying the core bin among
+        them), so it is rebuilt here from the alignments it was made from.
         """
-        path = self.directory / "bin_pangenome" / "genome_content.long.csv"
-        return pd.read_csv(path, low_memory=False)
+        detected = (
+            self.align_genomes
+            .dropna(subset=["bin"])
+            .drop_duplicates(subset=["genome", "sseqid"])
+            .groupby(["genome", "bin"])
+            .size()
+            .rename("n_genes_detected")
+            .reset_index()
+        )
+        return detected.assign(
+            prop_genes_detected=detected["n_genes_detected"] / detected["bin"].map(self.bin_size)
+        )
 
     @cached_property
     def bin_presence_wide(self) -> pd.DataFrame:

@@ -241,15 +241,15 @@ class Study:
     @cached_property
     def tested_bins(self) -> pd.MultiIndex:
         """
-        The (pangenome, bin) pairs the association analysis covered.
+        The (pangenome, bin) pairs the association analysis tested: those
+        passing the abundance filter, the bins the FDR correction covers.
 
         This is the right background for asking what is over-represented among
-        the bins it called significant: a bin that was never tested had no
-        chance of being called.
+        the bins it called significant: a bin that was never tested -- below
+        the filter, it is always called "=" -- had no chance of being called.
         """
-        return pd.MultiIndex.from_frame(
-            self.association[["pangenome", "feature"]], names=["pangenome", "bin"]
-        )
+        tested = self.association.loc[~self.association["low_abundance"]]
+        return pd.MultiIndex.from_frame(tested[["pangenome", "feature"]], names=["pangenome", "bin"])
 
     def significant_bins_by_direction(self) -> Dict[str, pd.MultiIndex]:
         """

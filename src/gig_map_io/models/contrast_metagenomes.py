@@ -404,7 +404,9 @@ class ContrastMetagenomes(Dataset):
         the core genome, which makes the threshold a fraction of the genome
         copies carrying the bin rather than a raw depth.
 
-        Returns the 2x2 table together with Fisher's exact test of it.
+        Returns the 2x2 table together with Fisher's exact test of it, the
+        odds ratio being that of presence in the second group, in coded
+        order, over the first.
         """
         from scipy import stats
 
@@ -429,7 +431,10 @@ class ContrastMetagenomes(Dataset):
             .fillna(0)
             .astype(int)
         )
-        odds_ratio, pvalue = stats.fisher_exact(table.values)
+        # The odds of presence in the second group over the first, so that for
+        # groups coded 0 and 1 the case-like group (1: bloodstream, case) is
+        # the numerator; the columns stay in coded order for the figures
+        odds_ratio, pvalue = stats.fisher_exact(table.values[:, ::-1])
 
         return dict(
             table=table,

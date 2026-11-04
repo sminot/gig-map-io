@@ -206,8 +206,10 @@ def plot_positivity_heatmap(
                           int(positive.loc[out_cat, f].sum()), int(out_cat.sum() - positive.loc[out_cat, f].sum()))
                 for f in positive.columns
             ]
-            odds = [0.0 if value is None else value for value in odds]
-            if best is None or np.mean(odds) > np.mean(best[1]):
+            # A bin with an empty cell has no odds ratio, and no bar: drawn as
+            # zero, a bin carried only by controls read as no difference
+            odds = [np.nan if value is None else value for value in odds]
+            if best is None or np.nanmean(odds) > np.nanmean(best[1]):
                 best = (category, odds)
         fig.add_trace(go.Bar(
             x=feature_labels, y=best[1], name=f"{best[0]} vs. rest",
