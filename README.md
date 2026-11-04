@@ -243,7 +243,11 @@ data region keeps the shape it had on screen, and the panel is as tall as that
 region plus its margins (and at least as tall as a legend down its right side
 needs), so a narrow cell does not flatten the plot. A y axis is never drawn
 shorter than its title, and scatter markers shrink with the square root of
-the data region's shrinkage. A panel may carry its own
+the data region's shrinkage. Kaleido prints a figure inside a margin and
+shrinks it to fit, so the page is cropped back to the canvas, and the white
+plotly leaves above and below the plot is then cut back to what it draws: by
+the same amount for every panel hung from the top of a row, so they stay
+level, and never into the corner the panel's letter covers. A panel may carry its own
 `font_pt`, `height_mm` to override the height, `aspect` to give its data
 region that height over width (measured from a trial render, since margins
 grow to fit legends and long titles), `plot_height_mm` to give its data

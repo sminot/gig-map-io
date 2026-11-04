@@ -18,7 +18,7 @@ from plotly.subplots import make_subplots
 
 from ..helpers.clustering import linkage_order
 from ..helpers.save_image import save_image
-from ..helpers.style import NEUTRAL, PRIMARY, QUALITATIVE, SIMPLE_TEMPLATE, TEMPLATE
+from ..helpers.style import NEUTRAL, PRIMARY, SIMPLE_TEMPLATE, TEMPLATE
 from ..helpers.coords import Coords
 from ..helpers.gene_context import draw_gene_labels, order_rows, plot_gene_context, unlabeled_note
 from ..helpers.genomes import genbank_duplicates
@@ -38,10 +38,13 @@ LOG_ODDS_STEP = 2
 #: How gene co-occurrence can be scored against distance: the column of
 #: calc_membership_vs_distance, its axis title, and how it is binned
 #: The bin key above a gene-content heatmap: each bin in turn takes the next
-#: color of QUALITATIVE, and one narrower than BIN_KEY_MIN_PX where it is
-#: drawn cannot be told from its neighbors, so it is gray, and a run of small
-#: bins reads as one gray band. Its height, and its gap above the genomes, as
-#: fractions of the genome rows.
+#: of BIN_KEY_COLORS, and one narrower than BIN_KEY_MIN_PX where it is drawn
+#: cannot be told from its neighbors, so it is gray, and a run of small bins
+#: reads as one gray band. The key's colors only part neighboring bins, so
+#: they alternate dark and light, in no hue an organism takes (Okabe-Ito
+#: yellow beside near-black), and so are not read as naming one. Its height,
+#: and its gap above the genomes, as fractions of the genome rows.
+BIN_KEY_COLORS = ["#222222", "#F0E442"]
 BIN_KEY_MIN_PX = 3
 BIN_KEY_HEIGHT = 0.06
 BIN_KEY_GAP = 0.02
@@ -404,8 +407,8 @@ class Pangenome(Dataset):
         # The key: wide enough bins cycle through the palette, the rest are gray
         px_per_gene = (axis_width_px or width - GENE_HEATMAP_MARGIN_PX) / sizes.sum()
         wide_enough = (sizes * px_per_gene >= BIN_KEY_MIN_PX).to_numpy()
-        color_index = np.where(wide_enough, (np.cumsum(wide_enough) - 1) % len(QUALITATIVE), len(QUALITATIVE))
-        palette = QUALITATIVE + [NEUTRAL]
+        color_index = np.where(wide_enough, (np.cumsum(wide_enough) - 1) % len(BIN_KEY_COLORS), len(BIN_KEY_COLORS))
+        palette = BIN_KEY_COLORS + [NEUTRAL]
         colorscale = [
             [edge, color]
             for i, color in enumerate(palette)

@@ -482,7 +482,7 @@ class Phylogeny:
             template=SIMPLE_TEMPLATE,
             width=width,
             height=height,
-            margin=dict(l=40, r=30, b=70, t=90),
+            margin=dict(l=40, r=30, b=70, t=64),
             legend=dict(TOP_LEGEND, yref="container", y=1.0, yanchor="top"),
         )
         save_image(fig, file_prefix)

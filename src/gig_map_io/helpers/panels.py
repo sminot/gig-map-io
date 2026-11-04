@@ -29,10 +29,12 @@ from typing import Any, Dict, List, Sequence
 
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
+from PIL import Image
 from pypdf import PageObject, PdfReader, PdfWriter, Transformation
-from pypdf.generic import ArrayObject, FloatObject, NameObject
+from pypdf.generic import ArrayObject, FloatObject, NameObject, RectangleObject
 
 #: PDF user space is in points
 POINTS_PER_MM = 72 / 25.4
@@ -73,11 +75,34 @@ CHARACTER_WIDTH = 0.55
 #: An axis is drawn this much longer than its title, so the title clears its ends
 AXIS_TITLE_PADDING = 1.15
 
+#: A plotly panel's margins are cut back to its drawing, leaving this much
+#: white above and below it, in points
+TRIM_PAD_PT = 1.5
+#: A pixel lighter than this in every channel is paper, not drawing
+PAPER_LEVEL = 250
+#: The corner a panel letter covers, as multiples of the letter's size from
+#: the cell's top left; a trimmed panel keeps its drawing out of it
+LABEL_CORNER_WIDTH = 1.4
+LABEL_CORNER_HEIGHT = 1.4
+
 LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #: bind_figures: the strip above each figure holding its number, and the
 #: number's size
 HEADING_MM = 9.0
 HEADING_SIZE_PT = 11.0
+
+
+@dataclass
+class Ink:
+    """
+    Where a panel's drawing lies down its page, as fractions of the page's
+    height from the top: the first and last rows drawn on, and the first row
+    drawn on in each column, which says how far down a corner is clear.
+    """
+
+    top: float
+    bottom: float
+    column_tops: np.ndarray
 
 
 @dataclass
@@ -121,7 +146,11 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
         in turn, so that a tall panel can run beside several shorter ones. A
         cell carrying ``"align": "bottom"`` sits on the bottom of its row
         rather than hanging from the top, so that panels of different heights
-        side by side share a baseline.
+        side by side share a baseline. The white a plotly panel leaves above
+        and below what it draws is cut back to ``TRIM_PAD_PT``: by the same
+        amount for each top panel of the cells hung from a row's top, and for
+        each bottom panel of the cells set on its bottom, so that they stay
+        level, and never into the corner the panel's letter covers.
     root:
         The directory the panel paths are relative to.
     output:
@@ -147,17 +176,16 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
     lettered = 0
     top = margin
     for row in rows:
-        row_height = 0.0
-        cell_x = margin
+        # Draw the row's panels first: how far each can be trimmed depends on
+        # its neighbors, so that panels side by side stay level
         cells = []
         for _, cell in row:
             span = int(cell.get("span", 1))
             cell_width = span * column_width + (span - 1) * gutter
-            panel_top = top
-            cell_start = len(placements)
+            drawn = []
             for panel in cell.get("stack", [cell]):
                 panel_height = panel.get("height_mm")
-                page = _panel_page(
+                page, ink = _panel_page(
                     Path(root) / panel["pdf"],
                     cell_width,
                     max_height,
@@ -171,10 +199,35 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
                 scale = cell_width / page_width
                 if max_height is not None and page_height * scale > max_height:
                     scale = max_height / page_height
+                label = panel.get("label", LABELS[lettered])
+                lettered += 1
+                room = _trimmable(ink, page_width * scale, page_height * scale, cell_width, label, label_size)
+                drawn.append([page, scale, label, *room])
+            cells.append((cell_width, cell.get("align", "top"), drawn))
+
+        # The top panels of the cells hung from the top lose the same amount,
+        # keeping them level, as do the bottom panels of those set on the bottom
+        hung = [drawn[0][3] for _, align, drawn in cells if align != "bottom"]
+        based = [drawn[-1][4] for _, align, drawn in cells if align == "bottom"]
+        for _, align, drawn in cells:
+            if align != "bottom":
+                drawn[0][3] = min(hung)
+            else:
+                drawn[-1][4] = min(based)
+
+        row_height = 0.0
+        cell_x = margin
+        bounds = []
+        for cell_width, align, drawn in cells:
+            panel_top = top
+            cell_start = len(placements)
+            for page, scale, label, trim_top, trim_bottom in drawn:
+                _trim(page, trim_top / scale, trim_bottom / scale)
+                page_width, page_height = _page_size(page)
                 placed_width, placed_height = page_width * scale, page_height * scale
                 placements.append(Placement(
                     page=page,
-                    label=panel.get("label", LABELS[lettered]),
+                    label=label,
                     scale=scale,
                     # Centered in a cell it does not fill, but always hung from the top
                     x=cell_x + (cell_width - placed_width) / 2,
@@ -182,12 +235,11 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
                     cell_x=cell_x,
                     cell_top=panel_top,
                 ))
-                lettered += 1
                 panel_top += placed_height + gutter
             row_height = max(row_height, panel_top - gutter - top)
-            cells.append((cell_start, len(placements), panel_top - gutter, cell.get("align", "top")))
+            bounds.append((cell_start, len(placements), panel_top - gutter, align))
             cell_x += cell_width + gutter
-        for start, end, cell_bottom, align in cells:
+        for start, end, cell_bottom, align in bounds:
             if align == "bottom":
                 drop = top + row_height - cell_bottom
                 for placement in placements[start:end]:
@@ -221,18 +273,19 @@ def compose_panels(spec: Dict[str, Any], root: str | Path, output: str | Path) -
 def _panel_page(
     pdf: Path, width: float, max_height: float | None, font_pt: float, height: float | None, legend: bool,
     aspect: float | None, plot_height: float | None,
-) -> PageObject:
+) -> tuple:
     """
-    The page to place for one panel: the plotly figure beside ``pdf``
-    rendered at ``width`` points with ``font_pt`` text, and without its
-    legend unless ``legend``, when its specification exists, otherwise the
-    first page of ``pdf`` itself.
+    The page to place for one panel, and where on it the drawing lies: the
+    plotly figure beside ``pdf`` rendered at ``width`` points with
+    ``font_pt`` text, and without its legend unless ``legend``, when its
+    specification exists, otherwise the first page of ``pdf`` itself, whose
+    margins are taken as drawn.
     """
     spec = pdf.with_suffix(".json")
     if not spec.exists():
         if not legend:
             raise ValueError(f"{pdf} has no plotly specification beside it, so its legend cannot be removed")
-        return PdfReader(pdf).pages[0]
+        return PdfReader(pdf).pages[0], Ink(0.0, 1.0, np.zeros(1))
     fig = pio.read_json(spec)
     if not legend:
         fig.update_layout(showlegend=False)
@@ -243,10 +296,11 @@ def render_at_print_size(
     fig: go.Figure, width: float, max_height: float | None, font_pt: float, height: float | None = None,
     aspect: float | None = None,
     plot_height: float | None = None,
-) -> PageObject:
+) -> tuple:
     """
     ``fig`` as a PDF page that, scaled to ``width`` points wide, shows its
-    base font at ``font_pt``. The page is drawn larger by the ratio of the
+    base font at ``font_pt``, and the ``Ink`` saying where on the page it
+    draws. The page is drawn larger by the ratio of the
     figure's font size to ``font_pt``, with every pixel size the figure
     gives left as it is, so the caller's scaling brings the text to
     ``font_pt``.
@@ -346,7 +400,73 @@ def render_at_print_size(
         fig = _scale_markers(go.Figure(fig), shrink).update_layout(legend_itemsizing="constant")
 
     page = go.Figure(fig).update_layout(width=canvas_width, height=height * enlargement)
-    return PdfReader(io.BytesIO(page.to_image(format="pdf"))).pages[0]
+    pdf = PdfReader(io.BytesIO(page.to_image(format="pdf"))).pages[0]
+    pdf.cropbox = _canvas_box(pdf, canvas_width, height * enlargement)
+    return pdf, _ink(page.to_image(format="png"))
+
+
+def _canvas_box(page: PageObject, width: float, height: float) -> RectangleObject:
+    """
+    Where a figure's ``width`` by ``height`` pixel canvas landed on the PDF
+    page kaleido printed it to. Kaleido prints with a margin and shrinks the
+    canvas to fit inside it -- by 18 px in its width, so a 160 px canvas comes
+    out at 89% and its text below the size asked for -- leaving white along
+    every edge. The first thing plotly paints is its paper, a rectangle the
+    canvas's size, and the transformation in force there places the canvas.
+    """
+    ctm = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    saved = []
+    for operands, operator in page.get_contents().operations:
+        if operator == b"q":
+            saved.append(ctm)
+        elif operator == b"Q":
+            ctm = saved.pop()
+        elif operator == b"cm":
+            a, b, c, d, e, f = (float(value) for value in operands)
+            A, B, C, D, E, F = ctm
+            ctm = (a * A + b * C, a * B + b * D, c * A + d * C, c * B + d * D, e * A + f * C + E, e * B + f * D + F)
+        elif operator == b"re":
+            x, y, w, h = (float(value) for value in operands)
+            if abs(w - width) < 1 and abs(h - height) < 1:
+                A, B, C, D, E, F = ctm
+                xs, ys = zip(*[(A * px + C * py + E, B * px + D * py + F) for px in (x, x + w) for py in (y, y + h)])
+                return RectangleObject((min(xs), min(ys), max(xs), max(ys)))
+    raise ValueError(f"No {width:.0f} x {height:.0f} px paper rectangle on the printed page to place the canvas by")
+
+
+def _ink(png: bytes) -> Ink:
+    """Where the drawing lies on a rendered page."""
+    with Image.open(io.BytesIO(png)) as image:
+        drawn = (np.asarray(image.convert("RGB")) < PAPER_LEVEL).any(axis=2)
+    rows = np.flatnonzero(drawn.any(axis=1))
+    if not len(rows):
+        raise ValueError("The panel draws nothing")
+    height = drawn.shape[0]
+    column_tops = np.where(drawn.any(axis=0), drawn.argmax(axis=0), height) / height
+    return Ink(rows[0] / height, (rows[-1] + 1) / height, column_tops)
+
+
+def _trimmable(ink: Ink, width: float, height: float, cell_width: float, label: str, label_size: float) -> list:
+    """
+    How much white can be cut from the top and the bottom of a panel placed
+    ``width`` by ``height`` points, centered in its cell, keeping
+    ``TRIM_PAD_PT`` of it and, at the top, keeping the corner its letter
+    covers clear of the drawing.
+    """
+    top = max(ink.top * height - TRIM_PAD_PT, 0.0)
+    if label:
+        corner = LABEL_CORNER_WIDTH * label_size - (cell_width - width) / 2
+        columns = int(np.ceil(corner / width * len(ink.column_tops)))
+        if columns > 0:
+            clear = ink.column_tops[:columns].min() * height
+            top = min(top, max(clear - LABEL_CORNER_HEIGHT * label_size, 0.0))
+    return [top, max((1 - ink.bottom) * height - TRIM_PAD_PT, 0.0)]
+
+
+def _trim(page: PageObject, top: float, bottom: float) -> None:
+    """Cut ``top`` and ``bottom`` points from ``page``, which also clips what it draws there."""
+    box = page.cropbox
+    page.cropbox = RectangleObject((box.left, float(box.bottom) + bottom, box.right, float(box.top) - top))
 
 
 def _data_region_px(fig: go.Figure, width: float, height: float) -> tuple:
