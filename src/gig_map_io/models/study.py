@@ -450,7 +450,11 @@ class Study:
         copies = detected.drop_duplicates("genome").join(names.drop(columns="accession"), on="genome")
         accessions = copies.pivot_table(
             index="assembly", columns=copies["accession"].str[:3], values="accession", aggfunc="first",
-        ).reindex(columns=["GCF", "GCA"])
+        ).reindex(columns=["GCF"])
+        # The GenBank copy of an assembly with a RefSeq one is no longer
+        # counted, as a twin, so its accession is found by assembly instead
+        genbank = names.loc[names["accession"].str.startswith("GCA_"), "accession"]
+        genbank = pd.Series(genbank.values, index=genbank.str[4:].values).groupby(level=0).first()
         # Each genome described from its RefSeq record where it has one
         record = copies.sort_values("accession", ascending=False).drop_duplicates("assembly").set_index("assembly")
         annotations = pd.DataFrame({
@@ -460,7 +464,7 @@ class Study:
             "organism_name": record["organism_name"],
             "strain": record["strain"].fillna(record["isolate"]),
             "refseq_accession": accessions["GCF"],
-            "genbank_accession": accessions["GCA"],
+            "genbank_accession": genbank.reindex(record.index),
             "assembly_level": record["assembly_level"],
         }, index=record.index)
 
