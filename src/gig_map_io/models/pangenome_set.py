@@ -148,10 +148,8 @@ class PangenomeSet(DatasetDict):
 
     @cached_property
     def genomes(self) -> list:
-        """Every genome file name across the pangenomes, sorted."""
-        return sorted({
-            genome for pangenome in self.pangenomes.values() for genome in pangenome.align_genomes["genome"].unique()
-        })
+        """Every genome file name across the pangenomes, sorted, GenBank twins included."""
+        return sorted({genome for pangenome in self.pangenomes.values() for genome in pangenome.genomes})
 
     @cached_property
     def core_genomes(self) -> Dict[str, str]:
