@@ -17,7 +17,7 @@ from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 
 from .save_image import save_image
-from .style import CASE_COLOR, CONTROL_COLOR, TEMPLATE, ZERO_LINE, group_colors
+from .style import CASE_COLOR, CONTROL_COLOR, LEFT_TOP_LEGEND, TEMPLATE, ZERO_LINE, group_colors
 
 #: The first word of the label of each set the significant bins are split
 #: into by direction of effect, and its color: bins higher in cases take the
@@ -48,8 +48,6 @@ WRAPPED_CATEGORY_PX = 40
 #: gap between a bar and its q-value
 MARK_MARGIN_PX = 70
 MARK_GAP_PX = 3
-#: Just short of the left end of the plot, where the legend starts
-LEGEND_X = -0.001
 
 
 def enrich_organisms(
@@ -235,13 +233,9 @@ def plot_enrichment(
         template=TEMPLATE,
         barmode="group",
         showlegend=show_legend,
-        legend=dict(
-            # Set from the left end of the plot: plotly wraps a legend anchored
-            # within the plot at the plot's width, too narrow beside long
-            # category names for both entries on one line, and lets one
-            # anchored left of it take the left margin's width as well
-            title_text="", orientation="h", x=LEGEND_X, xanchor="left", y=1.0, yanchor="bottom",
-        ),
+        # The plot beside long category names is too narrow for both
+        # entries on one row unless the legend may take the margin too
+        legend=dict(LEFT_TOP_LEGEND, title_text=""),
         margin=dict(t=top, b=BOTTOM_PX + TITLE_LINE_PX, r=MARK_MARGIN_PX if mark == "qvalue" else None),
         # A gridline per bin reads as a count while there are few; up to ten,
         # one every two keeps the labels apart in a narrow panel

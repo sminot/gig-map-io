@@ -65,6 +65,12 @@ DENSE_MARKER_OPACITY = 0.7
 #: A horizontal legend centered above the plot area.
 TOP_LEGEND = dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom")
 
+#: A horizontal legend above the plot area, starting from its left end.
+#: Plotly wraps a legend anchored within the plot at the plot's width, and
+#: lets one anchored just left of it take the left margin's width as well,
+#: which a narrow plot needs to keep its entries on one row
+LEFT_TOP_LEGEND = dict(TOP_LEGEND, x=-0.001, xanchor="left")
+
 #: A legend of at most this many entries sits above the plot; a longer one,
 #: such as the ten organisms, runs down the right margin
 SHORT_LEGEND = 6

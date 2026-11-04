@@ -26,7 +26,7 @@ from ..helpers.positivity import plot_feature_positivity, plot_positivity_heatma
 from ..helpers.save_image import save_image
 from ..helpers.style import (
     DENSE_MARKER_OPACITY, FDR_THRESH, LARGE_QUALITATIVE, PRIMARY, TEMPLATE,
-    SHORT_LEGEND, THRESHOLD_LINE, TOP_LEGEND, group_colors, legend_above, organism_colors, organism_order,
+    LEFT_TOP_LEGEND, SHORT_LEGEND, THRESHOLD_LINE, TOP_LEGEND, group_colors, legend_above, organism_colors, organism_order,
 )
 from ..helpers.supervised import fit_classifier
 from .study import Study
@@ -207,9 +207,12 @@ class StudySet:
         fig.update_yaxes(showticklabels=False, ticks="")
         fig.update_layout(showlegend=show_legend)
         # A short legend (disease, study) sits above the plot as it does in
-        # every other figure; a long one keeps the right margin
+        # every other figure; a long one keeps the right margin. Printed a
+        # third of a page wide, five studies take more than one row, so the
+        # legend may use the margin's width too and its title sits above the
+        # entries rather than beside them, letting the rows line up
         if order and len(order) <= SHORT_LEGEND:
-            fig.update_layout(legend=TOP_LEGEND, margin=dict(t=60))
+            fig.update_layout(legend=dict(LEFT_TOP_LEGEND, title_side="top"), margin=dict(t=60))
         save_image(fig, file_prefix)
         return fig
 
