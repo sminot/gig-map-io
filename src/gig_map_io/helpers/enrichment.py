@@ -19,12 +19,10 @@ from plotly.subplots import make_subplots
 from .save_image import save_image
 from .style import CASE_COLOR, CONTROL_COLOR, TEMPLATE, ZERO_LINE, group_colors
 
-#: How the significant bins are split by direction of effect, and the color
-#: of each side: bins higher in cases take the case color
-ASSOCIATION_COLORS = {
-    "Higher in cases": CASE_COLOR,
-    "Lower in cases": CONTROL_COLOR,
-}
+#: The first word of the label of each set the significant bins are split
+#: into by direction of effect, and its color: bins higher in cases take the
+#: case color, whatever the cases are called
+ASSOCIATION_COLORS = {"Higher": CASE_COLOR, "Lower": CONTROL_COLOR}
 
 #: Sizing: the two panels and their margins, the width one character of a
 #: category name takes at the template's 13 px, and the bounds on the width;
@@ -41,8 +39,11 @@ EMPTY_HEIGHT = 140
 BOTTOM_PX = 60
 TITLE_LINE_PX = 16
 #: A category name longer than this breaks over two lines, so that a long
-#: annotation term does not take the width the bars need in a printed panel
+#: annotation term does not take the width the bars need in a printed panel;
+#: every category then takes the height two lines need, since plotly spaces
+#: categories evenly and two lines in the room of one overlap their neighbors
 WRAP_CHARS = 24
+WRAPPED_CATEGORY_PX = 40
 #: Room right of the plot for a q-value printed beyond the last bar, and the
 #: gap between a bar and its q-value
 MARK_MARGIN_PX = 70
@@ -180,7 +181,10 @@ def plot_enrichment(
     if order is not None:
         category_orders[label] = order
     n_categories = len(order) if order is not None else df[label].nunique()
-    colors = {**group_colors(groups), **ASSOCIATION_COLORS}
+    colors = {
+        **group_colors(groups),
+        **{group: ASSOCIATION_COLORS[group.split()[0]] for group in groups if group.split()[0] in ASSOCIATION_COLORS},
+    }
 
     hover = {"qvalue": ":.2e", "odds_ratio": ":.3g", "n_foreground": True, "n_background": True}
     shared = dict(
@@ -219,13 +223,14 @@ def plot_enrichment(
         fig.update_xaxes(range=[min(0.0, float(np.nanmin(df["log2_odds_ratio"]))), upper * 1.45], row=1, col=2)
 
     longest = max((len(line) for name in df[label] for line in str(name).split("<br>")), default=0)
+    category_px = WRAPPED_CATEGORY_PX if df[label].astype(str).str.contains("<br>").any() else CATEGORY_PX
     top = 50 if show_legend else 15
     fig.update_layout(
         width=width if width is not None else int(np.clip(
             PANELS_PX + LABEL_CHAR_PX * longest, MIN_WIDTH, MAX_WIDTH,
         )),
         height=height if height is not None else (
-            top + BOTTOM_PX + TITLE_LINE_PX + max(MIN_PLOT_PX, CATEGORY_PX * n_categories)
+            top + BOTTOM_PX + TITLE_LINE_PX + max(MIN_PLOT_PX, category_px * n_categories)
         ),
         template=TEMPLATE,
         barmode="group",

@@ -31,8 +31,9 @@ from ..helpers.ncbi import genome_names
 from ..helpers.significance import call_direction
 from ..helpers.style import FDR_THRESH, organism_order
 
-#: The two sets the significant bins are split into, by the sign of their effect
-DIRECTIONS = {"Higher in cases": "positive", "Lower in cases": "negative"}
+#: The two sets the significant bins are split into, by the sign of their
+#: effect, labeled "<side> in <cases>"
+DIRECTIONS = {"Higher": "positive", "Lower": "negative"}
 
 
 class Study:
@@ -251,14 +252,15 @@ class Study:
         tested = self.association.loc[~self.association["low_abundance"]]
         return pd.MultiIndex.from_frame(tested[["pangenome", "feature"]], names=["pangenome", "bin"])
 
-    def significant_bins_by_direction(self) -> Dict[str, pd.MultiIndex]:
+    def significant_bins_by_direction(self, cases: str = "cases") -> Dict[str, pd.MultiIndex]:
         """
         The significant bins split by the direction of their effect, as a map
-        of label to (pangenome, bin) pairs.
+        of label ("Higher in cases", or in whatever ``cases`` names the
+        case-like group) to (pangenome, bin) pairs.
         """
         return {
-            label: self.significant_bins(direction=direction).index
-            for label, direction in DIRECTIONS.items()
+            f"{side} in {cases}": self.significant_bins(direction=direction).index
+            for side, direction in DIRECTIONS.items()
         }
 
 
@@ -282,30 +284,31 @@ class Study:
         index = features.index if isinstance(features, pd.DataFrame) else features
         return enrich_organisms(index, self.tested_bins, self.organisms, alternative)
 
-    def organism_enrichment(self) -> pd.DataFrame:
+    def organism_enrichment(self, cases: str = "cases") -> pd.DataFrame:
         """
         Organism enrichment among the positively and among the negatively
         associated bins, tested independently and labeled by a ``group``
-        column.
+        column (see :meth:`significant_bins_by_direction` for ``cases``).
         """
         return pd.concat(
             [
                 self.find_enriched_organisms(index).assign(group=label)
-                for label, index in self.significant_bins_by_direction().items()
+                for label, index in self.significant_bins_by_direction(cases).items()
             ],
             ignore_index=True,
         )
 
-    def annotation_enrichment(self) -> pd.DataFrame:
+    def annotation_enrichment(self, cases: str = "cases") -> pd.DataFrame:
         """
         Annotation term enrichment among the positively and among the
         negatively associated bins, tested independently against the bins
-        this study covered and labeled by a ``group`` column.
+        this study covered and labeled by a ``group`` column (see
+        :meth:`significant_bins_by_direction` for ``cases``).
         """
         return pd.concat(
             [
                 self.pangenomes.find_enriched_annotation_terms(index, universe=self.tested_bins).assign(group=label)
-                for label, index in self.significant_bins_by_direction().items()
+                for label, index in self.significant_bins_by_direction(cases).items()
             ],
             ignore_index=True,
         )
