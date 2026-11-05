@@ -31,6 +31,9 @@ from ..helpers.ncbi import genome_names
 from ..helpers.significance import call_direction
 from ..helpers.style import FDR_THRESH, organism_order
 
+#: Reads in one SRA spot, by library layout
+READS_PER_SPOT = {"PAIRED": 2, "SINGLE": 1}
+
 #: The two sets the significant bins are split into, by the sign of their
 #: effect, labeled "<side> in <cases>"
 DIRECTIONS = {"Higher": "positive", "Lower": "negative"}
@@ -201,6 +204,24 @@ class Study:
     def group_order(self, group: str) -> List[str]:
         """Category order declared for one sample group."""
         return list(self.sample_groups[group].order)
+
+    @cached_property
+    def total_reads(self) -> pd.Series:
+        """
+        Each sample's sequenced reads, where its metadata records them, and
+        NaN where it does not. curatedMetagenomicData's ``number_reads``
+        counts every read; SRA's ``read_count`` counts a pair once, so it is
+        doubled for a paired library, and left out where the layout is not
+        recorded.
+        """
+        metadata = self.contrasts.metadata
+        reads = pd.Series(np.nan, index=metadata.index)
+        if "number_reads" in metadata:
+            reads = pd.to_numeric(metadata["number_reads"], errors="coerce")
+        if "read_count" in metadata:
+            per_spot = metadata["library_layout"].map(READS_PER_SPOT)
+            reads = reads.fillna(pd.to_numeric(metadata["read_count"], errors="coerce") * per_spot)
+        return reads
 
 
     @property

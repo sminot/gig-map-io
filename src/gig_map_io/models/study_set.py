@@ -26,7 +26,7 @@ from ..helpers.positivity import plot_feature_positivity, plot_positivity_heatma
 from ..helpers.save_image import save_image
 from ..helpers.style import (
     DENSE_MARKER_OPACITY, FDR_THRESH, LARGE_QUALITATIVE, PRIMARY, TEMPLATE,
-    LEFT_TOP_LEGEND, SHORT_LEGEND, THRESHOLD_LINE, TOP_LEGEND, group_colors, legend_above, organism_colors, organism_order,
+    LEFT_TOP_LEGEND, SHORT_LEGEND, THRESHOLD_LINE, TOP_LEGEND, ZERO_LINE, group_colors, legend_above, organism_colors, organism_order,
 )
 from ..helpers.supervised import fit_classifier
 from .study import Study
@@ -589,14 +589,108 @@ class StudySet:
                     "Proportion": (rpkm[bin_id] / rpkm[core_genomes[organism]]).clip(lower=floor),
                     "Feature": f"{organism} - {bin_id}",
                 }))
+        return self._proportion_boxplot(
+            pd.concat(panels), "Proportion of genomes", floor, 1.0, width, height, file_prefix,
+        )
 
-        n_bins = len(index)
-        rows_px = max(MIN_BOXPLOT_PLOT_PX, BOXPLOT_ROW_PX * n_bins + BOXPLOT_ROW_GAP_PX * (n_bins - 1))
+    def nested_shares(
+        self,
+        organism: str,
+        species: str,
+        species_core: str,
+        bins: Iterable[str],
+    ) -> pd.DataFrame:
+        """
+        Three nested shares of each sample: of all its reads, the share
+        assigned to ``organism``'s pangenome; of the organism, the share that
+        is ``species``, its core genome ``species_core`` over the organism's;
+        and of the species, the share carrying each of ``bins``, each bin
+        over ``species_core``. The first needs the sample's total reads
+        (:attr:`Study.total_reads`) and is missing where they are not
+        recorded, and is zero for a sample with no reads assigned to the
+        organism; a ratio whose denominator has no reads is missing.
+
+        Returns one row per sample and share, with its cohort, case/control
+        group, the share's label in ``Feature`` and its value in
+        ``Proportion``, in the order the shares nest.
+        """
+        def share(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
+            return numerator / denominator.where(denominator > 0)
+
+        bins = list(bins)
+        rows = []
+        for study in self.studies:
+            metadata = study.sample_metadata(["cohort", "disease"])
+            contrast = study.contrast(organism)
+            rpkm = contrast.rpkm.reindex(metadata.index)
+            shares = {
+                # A sample with no reads assigned to the pangenome has no row
+                # in its tables, though it was searched like the rest
+                f"{organism}, of all reads": share(
+                    contrast.n_reads_aligned.sum(axis=1).reindex(metadata.index, fill_value=0),
+                    study.total_reads.reindex(metadata.index),
+                ),
+                f"{species} ({species_core}), of {organism}": share(
+                    rpkm[species_core], rpkm[study.core_genomes[organism]],
+                ),
+                **{f"{bin_id}, of {species}": share(rpkm[bin_id], rpkm[species_core]) for bin_id in bins},
+            }
+            for feature, values in shares.items():
+                rows.append(pd.DataFrame({
+                    "sample": metadata.index,
+                    "Cohort": metadata["cohort"].values,
+                    "Group": metadata["disease"].values,
+                    "Feature": feature,
+                    "Proportion": values.values,
+                }))
+        return pd.concat(rows, ignore_index=True)
+
+    def plot_nested_shares(
+        self,
+        shares: pd.DataFrame,
+        floor: float = 0.0001,
+        width: int = 560,
+        height: int | None = None,
+        file_prefix: str | None = None,
+    ) -> go.Figure:
+        """
+        The output of :meth:`nested_shares` as box plots by cohort and
+        case/control status, one row per share. A share of zero is drawn at
+        ``floor``; a missing one is not drawn. The axis runs past 1 when a
+        share does, as a bin commoner than its species' core genome can, and
+        a line marks 1, the whole.
+        """
+        values = shares["Proportion"].dropna()
+        top = max(1.0, 10.0 ** np.ceil(np.log10(values.max()))) if not values.empty else 1.0
+        return self._proportion_boxplot(
+            shares.dropna(subset=["Proportion"]).assign(Proportion=values.clip(lower=floor)),
+            "Proportion", floor, top, width, height, file_prefix,
+        )
+
+    def _proportion_boxplot(
+        self,
+        proportions: pd.DataFrame,
+        axis_title: str,
+        floor: float,
+        top: float,
+        width: int,
+        height: int | None,
+        file_prefix: str | None,
+    ) -> go.Figure:
+        """
+        Box plots of ``proportions`` (columns Cohort, Group, Proportion and
+        Feature) by cohort and case/control status, one row per feature in
+        the order they first appear, on a logarithmic axis from ``floor`` to
+        ``top`` shared by every row. The height follows the number of rows
+        unless given.
+        """
+        n_rows = proportions["Feature"].nunique()
+        rows_px = max(MIN_BOXPLOT_PLOT_PX, BOXPLOT_ROW_PX * n_rows + BOXPLOT_ROW_GAP_PX * (n_rows - 1))
         # The bottom margin is grown by plotly to fit the tilted cohort names;
         # set larger, it leaves empty space beneath them
-        top, bottom = 60, 10
+        margin_top, margin_bottom = 60, 10
         fig = px.box(
-            data_frame=pd.concat(panels),
+            data_frame=proportions,
             x="Cohort",
             y="Proportion",
             color="Group",
@@ -607,15 +701,17 @@ class StudySet:
             facet_col_wrap=1,
             facet_row_spacing=BOXPLOT_ROW_GAP_PX / rows_px,
             category_orders={"Cohort": self.cohort_order, "Group": self.disease_order},
-            labels={"Proportion": "Proportion of genomes", "Group": "", "Cohort": ""},
+            labels={"Proportion": axis_title, "Group": "", "Cohort": ""},
             width=width,
-            height=height if height is not None else top + bottom + rows_px,
-            range_y=(floor, 1),
+            height=height if height is not None else margin_top + margin_bottom + rows_px,
+            range_y=(floor, top),
         )
         fig.update_traces(marker=dict(size=3, opacity=0.6), line_width=1)
-        # Only the decades are worth a tick on a three-decade axis
-        decades = [10.0 ** i for i in range(int(np.log10(floor)), 1)]
+        # Only the decades are worth a tick on a log axis spanning several
+        decades = [10.0 ** i for i in range(round(np.log10(floor)), round(np.log10(top)) + 1)]
         fig.update_yaxes(tickvals=decades, ticktext=[f"{d:g}" for d in decades])
+        if top > 1:
+            fig.add_hline(y=1, row="all", col="all", **ZERO_LINE)
         # Tick marks only under the bottom row, the one labeled: elsewhere they
         # reach into the bin name over the row below
         fig.update_xaxes(tickangle=-40, ticks="")
@@ -626,10 +722,10 @@ class StudySet:
         # One axis title for the column of facets, not one per row
         fig.update_yaxes(title_text="")
         fig.add_annotation(
-            text="Proportion of genomes", x=0, xref="paper", y=0.5, yref="paper",
+            text=axis_title, x=0, xref="paper", y=0.5, yref="paper",
             xshift=-68, textangle=-90, showarrow=False, font=dict(size=14),
         )
-        fig.update_layout(margin=dict(t=top, b=bottom, l=85))
+        fig.update_layout(margin=dict(t=margin_top, b=margin_bottom, l=85))
         legend_above(fig)
         save_image(fig, file_prefix)
         return fig

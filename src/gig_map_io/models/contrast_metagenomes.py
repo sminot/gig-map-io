@@ -259,6 +259,11 @@ class ContrastMetagenomes(Dataset):
         return pd.read_csv(self.directory / "bin_abundance" / "rpkm.csv.gz", index_col=0)
 
     @cached_property
+    def n_reads_aligned(self) -> pd.DataFrame:
+        """Reads assigned to each bin, from bin_abundance/n_reads_aligned.csv.gz: specimens by bins."""
+        return pd.read_csv(self.directory / "bin_abundance" / "n_reads_aligned.csv.gz", index_col=0)
+
+    @cached_property
     def abund(self) -> pd.DataFrame:
         """
         Per-bin abundance from association/abund.csv, as it was handed to the
